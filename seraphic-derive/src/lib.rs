@@ -85,15 +85,15 @@ pub fn derive_rpc_req(input: TokenStream) -> TokenStream {
 
             let ns_type_id = format_ident!("{ns_type}");
             let namespace = quote! {
-                fn namespace() -> Namespace {
+                fn namespace() -> Self::Namespace {
                      Self::Namespace::try_from_str(#ns_var).unwrap()
 
                 }
             };
 
             let output = quote! {
-                impl RpcResponse for #response_struct_name {}
-                impl RpcRequest for #ident {
+                impl seraphic::RpcResponse for #response_struct_name {}
+                impl seraphic::RpcRequest for #ident {
                     type Response = #response_struct_name;
                     type Namespace = #ns_type_id;
                     #from_json
