@@ -66,7 +66,7 @@ pub fn derive_rpc_req(input: TokenStream) -> TokenStream {
             };
 
             let from_json = quote! {
-              fn try_from_json(json: &serde_json::Value) -> MainResult<Self> {
+              fn try_from_json(json: &serde_json::Value) -> seraphic::MainResult<Self> {
                     #from_json_body
                     #create_self
               }
@@ -144,7 +144,7 @@ pub fn derive_req_wrapper(input: TokenStream) -> TokenStream {
             }
 
             let into_rpc_req = quote! {
-                fn into_rpc_request(self, id: impl ToString) -> socket::Request {
+                fn into_rpc_request(self, id: impl ToString) -> seraphic::socket::Request {
                     match self {
                         #into_rpc_req_body
                     }
@@ -152,7 +152,7 @@ pub fn derive_req_wrapper(input: TokenStream) -> TokenStream {
             };
 
             let from_rpc_req = quote! {
-                fn try_from_rpc_req(req: socket::Request) -> MainResult<Self> {
+                fn try_from_rpc_req(req: seraphic::socket::Request) -> seraphic::MainResult<Self> {
                     #from_rpc_req_body
                     Err("Could not get request".into())
                 }

@@ -21,7 +21,7 @@ members = ["seraphic-derive"]
 [dependencies]
 serde_json = "1.0.132"
 serde = { version = "1.0.215",  features = ["derive"] }
-seraphic-derive = { path ="./seraphic-derive/", version="0.1.1"}
+seraphic-derive = { path ="./seraphic-derive/", version="0.1.2"}
 # TODO! minimize features here
 # + put tokio behind a feature and do a synchronous impl
 tokio = { version = "1.42.0", features = ["full"] }
