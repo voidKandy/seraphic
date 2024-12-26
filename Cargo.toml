@@ -2,7 +2,7 @@
 name = "seraphic"
 license = "MIT OR Apache-2.0"
 authors = [ "Void Kandy" ]
-version = "0.1.0"
+version = "0.1.1"
 description = "Lightweight JSON RPC 2.0"
 homepage="https://github.com/voidKandy/seraphic"
 repository="https://github.com/voidKandy/seraphic"
@@ -21,7 +21,7 @@ members = ["seraphic-derive"]
 [dependencies]
 serde_json = "1.0.132"
 serde = { version = "1.0.215",  features = ["derive"] }
-seraphic-derive = { version="0.1.0"}
+seraphic-derive = { path ="./seraphic-derive/", version="0.1.1"}
 # TODO! minimize features here
 # + put tokio behind a feature and do a synchronous impl
 tokio = { version = "1.42.0", features = ["full"] }

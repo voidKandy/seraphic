@@ -27,14 +27,14 @@ pub trait RpcRequest:
     type Namespace: RpcNamespace;
     fn method() -> &'static str;
     fn namespace() -> Self::Namespace;
-    fn into_rpc_request(&self, id: u32) -> MainResult<socket::Request> {
+    fn into_rpc_request(&self, id: impl ToString) -> MainResult<socket::Request> {
         let params = serde_json::to_value(&self)?;
         let method = format!("{}_{}", Self::namespace().as_str(), Self::method());
         Ok(socket::Request {
             jsonrpc: JSONRPC_FIELD.to_string(),
             method,
             params,
-            id: format!("{id}"),
+            id: id.to_string(),
         })
     }
     fn try_from_request(req: &socket::Request) -> MainResult<Option<Self>> {
