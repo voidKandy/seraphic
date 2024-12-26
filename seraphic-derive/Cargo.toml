@@ -1,5 +1,9 @@
 [package]
 name = "seraphic-derive"
+description = "Derive macros for seraphic"
+license = "MIT OR Apache-2.0"
+readme="README.md"
+authors = [ "Void Kandy" ]
 version = "0.1.0"
 edition = "2021"
 
