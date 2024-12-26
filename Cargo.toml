@@ -1,0 +1,32 @@
+[package]
+name = "seraphic"
+license = "MIT OR Apache-2.0"
+authors = [ "Void Kandy" ]
+version = "0.1.0"
+description = "Lightweight JSON RPC 2.0"
+homepage="https://github.com/voidKandy/seraphic"
+repository="https://github.com/voidKandy/seraphic"
+readme="README.md"
+keywords = [ "api", "json", "rpc"]
+categories= []
+edition = "2021"
+
+
+[lib]
+path="src/lib.rs"
+
+[workspace]
+members = ["seraphic-derive"]
+
+[dependencies]
+serde_json = "1.0.132"
+serde = { version = "1.0.215",  features = ["derive"] }
+seraphic-derive = { path ="./seraphic-derive/", version="0.1.0"}
+# TODO! minimize features here
+# + put tokio behind a feature and do a synchronous impl
+tokio = { version = "1.42.0", features = ["full"] }
+# TODO! put this behind feature
+tracing = { version = "0.1.40", features = ["log"] }
+
+
+
