@@ -144,7 +144,7 @@ pub fn derive_req_wrapper(input: TokenStream) -> TokenStream {
             }
 
             let into_rpc_req = quote! {
-                fn into_rpc_request(self, id: u32) -> socket::Request {
+                fn into_rpc_request(self, id: impl ToString) -> socket::Request {
                     match self {
                         #into_rpc_req_body
                     }
