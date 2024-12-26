@@ -256,7 +256,7 @@ checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 name = "seraphic"
 version = "0.1.0"
 dependencies = [
- "seraphic-derive",
+ "seraphic-derive 0.1.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "serde",
  "serde_json",
  "tokio",
@@ -266,6 +266,18 @@ dependencies = [
 [[package]]
 name = "seraphic-derive"
 version = "0.1.0"
+dependencies = [
+ "darling",
+ "proc-macro2",
+ "quote",
+ "syn",
+]
+
+[[package]]
+name = "seraphic-derive"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "eb67290835627f25c41d1d1d31730540e2a52ed8cf2ce03ad17047d6d80e3442"
 dependencies = [
  "darling",
  "proc-macro2",
