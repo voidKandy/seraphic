@@ -49,7 +49,7 @@ pub fn derive_rpc_req(input: TokenStream) -> TokenStream {
                 let not_deserialize = format!("field '{id_string}' does not implement deserialize");
                 from_json_body = quote! {
                     #from_json_body
-                    let #json_name =  json.get(#id_string).ok_or(#not_exist)?.to_owned();
+                    let #json_name = json.get(#id_string).ok_or(#not_exist)?.to_owned();
                     let #id = serde_json::from_value(#json_name).map_err(|_|#not_deserialize)?;
                 };
 
@@ -66,7 +66,7 @@ pub fn derive_rpc_req(input: TokenStream) -> TokenStream {
             };
 
             let from_json = quote! {
-              fn try_from_json(json: &serde_json::Value) -> seraphic::MainResult<Self> {
+              fn try_from_json(json: &serde_json::Value) -> std::result::Result<Self,Box<dyn std::error::Error + Send + Sync + 'static>> {
                     #from_json_body
                     #create_self
               }
@@ -92,8 +92,8 @@ pub fn derive_rpc_req(input: TokenStream) -> TokenStream {
             };
 
             let output = quote! {
-                impl seraphic::RpcResponse for #response_struct_name {}
-                impl seraphic::RpcRequest for #ident {
+                impl RpcResponse for #response_struct_name {}
+                impl RpcRequest for #ident {
                     type Response = #response_struct_name;
                     type Namespace = #ns_type_id;
                     #from_json
@@ -130,6 +130,7 @@ pub fn derive_req_wrapper(input: TokenStream) -> TokenStream {
                     _ => panic!("only unnamed struct variants supported"),
                 };
                 let not_rpc_request = format!("variant {id} does not implement RpcRequest");
+
                 into_rpc_req_body = quote! {
                     #into_rpc_req_body
                     Self::#id(rq) => rq.into_rpc_request(id).expect(#not_rpc_request),
@@ -152,7 +153,7 @@ pub fn derive_req_wrapper(input: TokenStream) -> TokenStream {
             };
 
             let from_rpc_req = quote! {
-                fn try_from_rpc_req(req: seraphic::socket::Request) -> seraphic::MainResult<Self> {
+                fn try_from_rpc_req(req: seraphic::socket::Request) -> std::result::Result<Self,Box<dyn std::error::Error + Send + Sync + 'static>> {
                     #from_rpc_req_body
                     Err("Could not get request".into())
                 }
@@ -173,9 +174,19 @@ pub fn derive_req_wrapper(input: TokenStream) -> TokenStream {
     }
 }
 
-#[proc_macro_derive(RpcNamespace)]
+#[derive(FromDeriveInput, Default)]
+#[darling(default, attributes(namespace))]
+struct NamespaceOpts {
+    separator: Option<String>,
+}
+
+#[proc_macro_derive(RpcNamespace, attributes(namespace))]
 pub fn derive_namespace(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input);
+    let opts = NamespaceOpts::from_derive_input(&input).expect("Wrong options");
+    let separator = opts.separator.unwrap_or("_".to_string());
+    let separator = quote! {const SEPARATOR: &str = #separator;};
+
     let DeriveInput { ident, data, .. } = input;
     match data {
         Data::Enum(DataEnum { variants, .. }) => {
@@ -223,6 +234,7 @@ pub fn derive_namespace(input: TokenStream) -> TokenStream {
                     #my_str_consts
                 }
                 impl RpcNamespace for #ident {
+                 #separator
                     #as_str
                     #try_from
                 }
