@@ -1,19 +1,18 @@
+#[cfg(feature = "client")]
+pub mod client;
 pub mod connection;
-pub(crate) mod error;
-pub(crate) mod io;
+pub mod error;
+pub mod io;
 pub mod msg;
-pub mod scratch;
 #[cfg(feature = "server")]
 pub mod server;
-pub mod thread;
 use error::Error;
-use msg::{Request, Response};
+pub use msg::{Message, MessageId, Request, Response};
 pub use seraphic_derive as derive;
 
 type MainErr = Box<dyn std::error::Error + Send + Sync + 'static>;
 type MainResult<T> = std::result::Result<T, MainErr>;
 pub const JSONRPC_FIELD: &str = "2.0";
-
 pub trait RpcNamespace: PartialEq + Copy {
     const SEPARATOR: &str;
     fn as_str(&self) -> &str;
@@ -39,14 +38,15 @@ pub trait RpcResponse:
         Ok(Ok(me))
     }
 
-    fn into_response(&self, id: impl ToString) -> Response {
-        let result = serde_json::to_value(self).expect("failed to serialized");
-        Response {
+    /// Only fails if self fails to serialize
+    fn into_response(&self, id: impl ToString) -> MainResult<Response> {
+        let result = serde_json::to_value(self)?;
+        Ok(Response {
             jsonrpc: JSONRPC_FIELD.to_string(),
             id: id.to_string(),
             result: Some(result),
             error: None,
-        }
+        })
     }
 }
 
@@ -57,7 +57,8 @@ pub trait RpcRequest:
     type Namespace: RpcNamespace;
     fn method() -> &'static str;
     fn namespace() -> Self::Namespace;
-    fn into_rpc_request(&self, id: impl ToString) -> MainResult<Request> {
+    /// Only fails if self fails to serialize
+    fn into_request(&self, id: impl ToString) -> MainResult<Request> {
         let params = serde_json::to_value(&self)?;
         let method = format!("{}_{}", Self::namespace().as_str(), Self::method());
         Ok(Request {
@@ -84,11 +85,72 @@ pub trait RpcRequest:
         Self: Sized;
 }
 
-pub trait RpcRequestWrapper: std::fmt::Debug {
-    fn into_rpc_request(self, id: impl ToString) -> Request
+pub enum MsgWrapper<Req, Res> {
+    Req { id: MessageId, req: Req },
+    Res { id: MessageId, res: Res },
+    Shutdown,
+}
+
+impl<Req, Res> TryFrom<msg::Message> for MsgWrapper<Req, Res>
+where
+    Req: RequestWrapper,
+    Res: ResponseWrapper,
+{
+    type Error = MainErr;
+    fn try_from(value: msg::Message) -> Result<Self, Self::Error> {
+        match value {
+            msg::Message::Req(req) => Ok(Self::Req {
+                id: req.id.clone(),
+                req: Req::try_from_req(req)?,
+            }),
+            msg::Message::Res(res) => Ok(Self::Res {
+                id: res.id.clone(),
+                res: Res::try_from_res(res)?,
+            }),
+            msg::Message::Shutdown => Ok(Self::Shutdown),
+        }
+    }
+}
+
+impl<Req, Res> MsgWrapper<Req, Res>
+where
+    Req: RequestWrapper,
+    Res: ResponseWrapper,
+{
+    pub fn id(&self) -> Option<&MessageId> {
+        match self {
+            Self::Req { id, .. } | Self::Res { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+    pub fn as_req(&self) -> Option<(&MessageId, &Req)> {
+        match self {
+            Self::Req { id, req } => Some((id, req)),
+            _ => None,
+        }
+    }
+    pub fn as_res(&self) -> Option<(&MessageId, &Res)> {
+        match self {
+            Self::Res { id, res } => Some((id, res)),
+            _ => None,
+        }
+    }
+}
+
+pub trait ResponseWrapper: std::fmt::Debug {
+    fn into_res(self, id: impl ToString) -> Response
     where
         Self: Sized;
-    fn try_from_rpc_req(req: Request) -> MainResult<Self>
+    fn try_from_res(res: Response) -> MainResult<Self>
+    where
+        Self: Sized;
+}
+
+pub trait RequestWrapper: std::fmt::Debug {
+    fn into_req(self, id: impl ToString) -> Request
+    where
+        Self: Sized;
+    fn try_from_req(req: Request) -> MainResult<Self>
     where
         Self: Sized;
 }

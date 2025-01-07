@@ -26,10 +26,6 @@ pub fn derive_rpc_req(input: TokenStream) -> TokenStream {
                 .strip_suffix("Request")
                 .expect("make sure to put 'Request' at the end of your struct name");
             // let struct_name = format_ident!("{}", name_no_suffix);
-            let response_struct_name = match opts.response {
-                Some(res) => format_ident!("{}", res),
-                None => format_ident!("{}Response", name_no_suffix),
-            };
             let first_char = name_no_suffix
                 .chars()
                 .next()
@@ -91,8 +87,21 @@ pub fn derive_rpc_req(input: TokenStream) -> TokenStream {
                 }
             };
 
-            let output = quote! {
-                impl RpcResponse for #response_struct_name {}
+            let (response_struct_name, should_impl) = match opts.response {
+                //if a response struct is passed in opt, it is assumed it alrady implements needed
+                //trait
+                Some(res) => (format_ident!("{}", res), false),
+                None => (format_ident!("{}Response", name_no_suffix), true),
+            };
+
+            let mut output = quote! {};
+            if should_impl {
+                output = quote! {
+                    impl RpcResponse for #response_struct_name {}
+                }
+            }
+            output = quote! {
+                #output
                 impl RpcRequest for #ident {
                     type Response = #response_struct_name;
                     type Namespace = #ns_type_id;
@@ -110,14 +119,14 @@ pub fn derive_rpc_req(input: TokenStream) -> TokenStream {
     }
 }
 
-#[proc_macro_derive(RpcRequestWrapper)]
+#[proc_macro_derive(RequestWrapper)]
 pub fn derive_req_wrapper(input: TokenStream) -> TokenStream {
     let input = parse_macro_input!(input);
     let DeriveInput { ident, data, .. } = input;
     match data {
         Data::Enum(DataEnum { variants, .. }) => {
-            let mut into_rpc_req_body = quote! {};
-            let mut from_rpc_req_body = quote! {};
+            let mut into_req_body = quote! {};
+            let mut from_req_body = quote! {};
             for v in variants {
                 let id = v.ident;
                 let enum_typ = match v.fields {
@@ -129,40 +138,104 @@ pub fn derive_req_wrapper(input: TokenStream) -> TokenStream {
                     },
                     _ => panic!("only unnamed struct variants supported"),
                 };
-                let not_rpc_request = format!("variant {id} does not implement RpcRequest");
+                let not_request = format!("variant {id} does not implement RpcRequest");
 
-                into_rpc_req_body = quote! {
-                    #into_rpc_req_body
-                    Self::#id(rq) => rq.into_rpc_request(id).expect(#not_rpc_request),
+                into_req_body = quote! {
+                    #into_req_body
+                    Self::#id(r) => r.into_request(id).expect(#not_request),
                 };
 
-                from_rpc_req_body = quote! {
-                    #from_rpc_req_body
-                    if let Some(req) = #enum_typ::try_from_request(&req)? {
-                        return Ok(Self::#id(req));
+                from_req_body = quote! {
+                    #from_req_body
+                    if let Some(r) = #enum_typ::try_from_request(&req)? {
+                        return Ok(Self::#id(r));
                     }
                 };
             }
 
-            let into_rpc_req = quote! {
-                fn into_rpc_request(self, id: impl ToString) -> seraphic::socket::Request {
+            let into_req = quote! {
+                fn into_req(self, id: impl ToString) -> seraphic::Request {
                     match self {
-                        #into_rpc_req_body
+                        #into_req_body
                     }
                 }
             };
 
-            let from_rpc_req = quote! {
-                fn try_from_rpc_req(req: seraphic::socket::Request) -> std::result::Result<Self,Box<dyn std::error::Error + Send + Sync + 'static>> {
-                    #from_rpc_req_body
+            let from_req = quote! {
+                fn try_from_req(req: seraphic::Request) -> std::result::Result<Self,Box<dyn std::error::Error + Send + Sync + 'static>> {
+                    #from_req_body
                     Err("Could not get request".into())
                 }
             };
 
             let output = quote! {
-                impl RpcRequestWrapper for #ident {
-                    #into_rpc_req
-                    #from_rpc_req
+                impl seraphic::RequestWrapper for #ident {
+                    #into_req
+                    #from_req
+
+                }
+            };
+            output.into()
+        }
+        _ => {
+            panic!("cannot derive this on anything but an enum")
+        }
+    }
+}
+
+#[proc_macro_derive(ResponseWrapper)]
+pub fn derive_res_wrapper(input: TokenStream) -> TokenStream {
+    let input = parse_macro_input!(input);
+    let DeriveInput { ident, data, .. } = input;
+    match data {
+        Data::Enum(DataEnum { variants, .. }) => {
+            let mut into_res_body = quote! {};
+            let mut from_res_body = quote! {};
+            for v in variants {
+                let id = v.ident;
+                let enum_typ = match v.fields {
+                    syn::Fields::Unnamed(t) => match t.unnamed.iter().next().cloned().unwrap().ty {
+                        syn::Type::Path(TypePath { path, .. }) => {
+                            path.segments.iter().next().unwrap().ident.clone()
+                        }
+                        other => panic!("Expected type path as unnamed variant, got: {other:#?}"),
+                    },
+                    _ => panic!("only unnamed struct variants supported"),
+                };
+                let not_res = format!("variant {id} does not implement RpcResponse");
+
+                into_res_body = quote! {
+                    #into_res_body
+                    Self::#id(r) => r.into_response(id).expect(#not_res),
+                };
+
+                from_res_body = quote! {
+                    #from_res_body
+                    if let Ok(r) = #enum_typ::try_from_response(&res)? {
+                        return Ok(Self::#id(r));
+                    }
+                };
+            }
+
+            let into_res = quote! {
+                fn into_res(self, id: impl ToString) -> seraphic::Response {
+                    match self {
+                        #into_res_body
+                    }
+                }
+            };
+
+            let from_res = quote! {
+                fn try_from_res(res: seraphic::Response) -> std::result::Result<Self,Box<dyn std::error::Error + Send + Sync + 'static>> {
+                    #from_res_body
+                    Err("Could not get response".into())
+                }
+            };
+
+            let output = quote! {
+                impl ResponseWrapper for #ident {
+                    #into_res
+                    #from_res
 
                 }
             };

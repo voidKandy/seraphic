@@ -19,10 +19,18 @@ path="src/lib.rs"
 members = ["seraphic-derive"]
 
 [features]
-default = ["server"]
+default = ["server", "client"]
 server = []
+client = []
+
+[[example]]
+name = "echo"
+path = "examples/echo.rs"
 
 
+
+[dev-dependencies]
+tracing-subscriber = "0.3.19"
 [dependencies]
 serde_json = "1.0.132"
 serde = { version = "1.0.215",  features = ["derive"] }

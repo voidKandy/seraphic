@@ -1,29 +1,26 @@
-use core::error;
+use crate::msg::Message;
+use serde::{Deserialize, Serialize};
 use std::{
     io::{BufRead, Write},
     marker::PhantomData,
 };
 
-use serde::{Deserialize, Serialize};
-
-use crate::{MainErr, MainResult};
-
-pub struct TcpPacket<'p, T> {
+pub struct TcpPacket<T> {
     buffer: Vec<u8>,
-    marker: PhantomData<&'p T>,
+    marker: PhantomData<T>,
 }
 
-pub type MessagePacket = TcpPacket<'static, crate::socket::Message>;
+pub type MessagePacket = TcpPacket<Message>;
 type HeaderSize = u32;
 const fn header_size() -> usize {
     std::mem::size_of::<HeaderSize>() / std::mem::size_of::<u8>()
 }
 
-impl<'p, T> From<&'p T> for TcpPacket<'p, T>
+impl<T> From<&T> for TcpPacket<T>
 where
     T: Serialize,
 {
-    fn from(r: &'p T) -> Self {
+    fn from(r: &T) -> Self {
         let vec = serde_json::to_vec(r).expect("T will not work");
 
         assert!(
@@ -45,51 +42,52 @@ where
     }
 }
 
-impl<'p, T> serde::Serialize for TcpPacket<'p, T>
-where
-    T: serde::Serialize,
-{
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+impl<'de, T> serde::Deserialize<'de> for TcpPacket<T> {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
-        S: serde::Serializer,
+        D: serde::Deserializer<'de>,
     {
-        serde::Serialize::serialize(&self.buffer, serializer)
+        let buffer = <Vec<u8> as Deserialize>::deserialize(deserializer)?;
+        Ok(Self {
+            buffer,
+            marker: PhantomData,
+        })
     }
 }
 
-impl<'p, T> TcpPacket<'p, T>
+impl<T> TcpPacket<T>
 where
-    T: serde::Serialize,
+    T: serde::Serialize + for<'de> Deserialize<'de>,
 {
     pub fn read(inp: &mut dyn BufRead) -> std::io::Result<Option<T>> {
-        let buffer = [0u8; 1024];
-        let mut vecs = vec![Vec::with_capacity(header_size()), buffer];
+        let mut header = [0u8; header_size()];
+        let mut buffer = [0u8; 1024].to_vec();
         let mut size = None;
-        // let mut buf = String::new();
+        tracing::warn!("reading");
         loop {
-            // vecs.iter_mut().for_each(|v| v.clear());
-            let n = inp.read_vectored(vecs)?;
-            if n == 0 {
-                return Ok(None);
-            } else if n < header_size() {
-                return Err(std::io::Error::other(format!(
-                    "read an unexpected amount, expected at least: {}, got: {n}",
-                    header_size()
-                )));
+            match inp.read_exact(&mut header) {
+                Ok(_) => {
+                    if header.is_empty() {
+                        break;
+                    }
+                    let payload_size = u32::from_le_bytes(header) as usize;
+                    tracing::warn!("expecting payload of size: {payload_size}");
+                    size = Some(payload_size)
+                }
+                Err(err) => {
+                    return Err(std::io::Error::other(format!(
+                        "unexepect error when reading: {err:#?}",
+                    )));
+                }
             }
-
-            let payload_size = u32::from_le_bytes(vecs[0]) as usize;
-            tracing::warn!("expecting payload of size: {payload_size}");
-            size = Some(payload_size)
         }
-        let size: usize = size.ok_or_else(|| Err(std::io::Error::other("no content length")))?;
-        let mut buf = vecs[1];
-        buf.resize(size, 0);
-        inp.read_exact(&mut buf)?;
-        let typ = serde_json::from_slice::<T>(&buf).unwrap_or_else(|| {
+        let size: usize = size.ok_or(std::io::Error::other("no content length"))?;
+        buffer.resize(size, 0);
+        inp.read_exact(&mut buffer)?;
+        let typ = serde_json::from_slice::<T>(&buffer).map_err(|err| {
             std::io::Error::other(format!(
-                "malformed payload: {}",
-                String::from_utf8_lossy(&buf),
+                "malformed payload: {}\nErr: {err:#?}",
+                String::from_utf8_lossy(&buffer),
             ))
         })?;
         // let buf = String::from_utf8(buf).map_err(invalid_data)?;
@@ -99,17 +97,8 @@ where
 
     pub fn write(out: &mut dyn Write, typ: &T) -> std::io::Result<()> {
         let packet = Self::from(typ);
-        serde_json::to_value(&packet)?
-    }
-}
-
-mod tests {
-    use super::TcpPacket;
-
-    #[test]
-    fn packet() {
-        let json = serde_json::json!({});
-        let packet = TcpPacket::from(&json);
-        let vec = serde_json::to_value(&packet).unwrap();
+        out.write_all(&packet.buffer)?;
+        out.flush()?;
+        Ok(())
     }
 }

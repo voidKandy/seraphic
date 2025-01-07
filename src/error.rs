@@ -7,7 +7,7 @@ use crate::msg::Message;
 pub struct Error {
     /// A Number that indicates the error type that occurred.
     /// This MUST be an integer.
-    pub code: String,
+    pub code: ErrorCode,
     /// A String providing a short description of the error.
     /// The message SHOULD be limited to a concise single sentence.
     pub message: String,
@@ -17,7 +17,7 @@ pub struct Error {
     pub data: Option<serde_json::Value>,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[non_exhaustive]
 pub enum ErrorCode {
     // Defined by JSON RPC:
@@ -36,7 +36,7 @@ pub enum ErrorCode {
 pub enum ErrorKind<'e> {
     Other { str: &'e str, code: ErrorCode },
     Disconnect,
-    Uninitialized(&'e Message),
+    Uninitialized(serde_json::Value),
 }
 
 impl<'e> Into<Error> for ErrorKind<'e> {
@@ -44,21 +44,29 @@ impl<'e> Into<Error> for ErrorKind<'e> {
         let (code, message, data) = match self {
             Self::Other { str, code } => (code, str, None),
             Self::Disconnect => (ErrorCode::Disconnect, "disconnected channel", None),
-            Self::Uninitialized(message) => {
-                let payload = serde_json::to_value(&message)
-                    .unwrap_or_else(|e| json!(format!("malformed payload: {e:#?}")));
-                (
-                    ErrorCode::ServerErrorStart,
-                    "uninitialized channel",
-                    payload,
-                )
-            }
+            Self::Uninitialized(json) => (
+                ErrorCode::ServerErrorStart,
+                "uninitialized channel",
+                Some(json),
+            ),
         };
+        let message = message.to_string();
+        Error {
+            code,
+            message,
+            data,
+        }
     }
 }
 
 impl<'e> ErrorKind<'e> {
-    pub fn other(str: &str, code: ErrorCode) -> Self {
+    pub fn other(str: &'e str, code: ErrorCode) -> Self {
         Self::Other { str, code }
+    }
+
+    pub fn uninitialized(msg: &'e Message) -> Self {
+        let payload = serde_json::to_value(msg)
+            .unwrap_or_else(|e| json!(format!("malformed payload: {e:#?}")));
+        Self::Uninitialized(payload)
     }
 }

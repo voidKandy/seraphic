@@ -1,9 +1,9 @@
-pub mod packet;
+pub(super) mod packet;
 /// this module has been ripped directly from `lsp_server`
 /// https://docs.rs/lsp-server/latest/src/lsp_server/stdio.rs.html
 /// ^^ Many thanks to these guys ^^
 use std::{
-    io::{self, stdin, stdout, BufRead, BufReader},
+    io::{self, stdin, stdout, BufReader},
     net::TcpStream,
     thread,
 };
@@ -11,19 +11,20 @@ use std::{
 use crossbeam_channel::{bounded, Receiver, Sender};
 use packet::MessagePacket;
 
-use crate::msg::Message;
+use crate::{connection::InitializeConnectionMessage, msg::Message};
 
-pub(crate) fn socket_transport(
+pub(crate) fn socket_transport<I: InitializeConnectionMessage>(
     stream: TcpStream,
 ) -> (Sender<Message>, Receiver<Message>, IoThreads) {
-    let (reader_receiver, reader) = stream.try_clone().unwrap();
+    let (reader_receiver, reader) = make_reader::<I>(stream.try_clone().unwrap());
     let (writer_sender, writer) = make_write(stream);
     let io_threads = make_io_threads(reader, writer);
     (writer_sender, reader_receiver, io_threads)
 }
 
 /// Creates an RPC connection via stdio.
-pub(crate) fn stdio_transport() -> (Sender<Message>, Receiver<Message>, IoThreads) {
+pub(crate) fn stdio_transport<I: InitializeConnectionMessage>(
+) -> (Sender<Message>, Receiver<Message>, IoThreads) {
     let (writer_sender, writer_receiver) = bounded::<Message>(0);
     let writer = thread::Builder::new()
         .name("RPCServerWriter".to_owned())
@@ -42,9 +43,13 @@ pub(crate) fn stdio_transport() -> (Sender<Message>, Receiver<Message>, IoThread
             let stdin = stdin();
             let mut stdin = stdin.lock();
             while let Some(msg) = MessagePacket::read(&mut stdin)? {
-                let is_exit = matches!(msg, Message::Close);
-
                 tracing::warn!("sending message {:#?}", msg);
+                let is_exit = if let Message::Res(r) = &msg {
+                    I::matches(r)
+                } else {
+                    false
+                };
+
                 if let Err(e) = reader_sender.send(msg) {
                     return Err(io::Error::new(io::ErrorKind::Other, e));
                 }
@@ -88,12 +93,18 @@ impl IoThreads {
     }
 }
 
-fn make_reader(stream: TcpStream) -> (Receiver<Message>, thread::JoinHandle<io::Result<()>>) {
+fn make_reader<I: InitializeConnectionMessage>(
+    stream: TcpStream,
+) -> (Receiver<Message>, thread::JoinHandle<io::Result<()>>) {
     let (reader_sender, reader_receiver) = bounded::<Message>(0);
     let reader = thread::spawn(move || {
         let mut buf_read = BufReader::new(stream);
         while let Some(msg) = MessagePacket::read(&mut buf_read).unwrap() {
-            let is_exit = matches!(&msg, Message::Close);
+            let is_exit = if let Message::Res(r) = &msg {
+                I::matches(r)
+            } else {
+                false
+            };
             reader_sender.send(msg).unwrap();
             if is_exit {
                 break;

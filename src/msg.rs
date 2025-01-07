@@ -1,28 +1,24 @@
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 
-use crate::{MainErr, JSONRPC_FIELD};
+use crate::{MainErr, RpcRequest, RpcResponse, JSONRPC_FIELD};
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 #[serde(untagged)]
 pub enum Message {
     Req(Request),
     Res(Response),
-    // Close,
-    // Open,
+    Shutdown,
 }
 
 pub type MessageId = String;
 
 impl Message {
-    const CLOSE_ID: &str = "CLOSE";
-    const OPEN_ID: &str = "OPEN";
-    pub fn id(&self) -> MessageId {
+    const SHUTDOWN: &'static str = "shutdown";
+    pub fn id(&self) -> &str {
         match self {
-            Self::Req(r) => r.id,
-            Self::Res(r) => r.id,
-            Self::Close => Self::CLOSE_ID.to_string(),
-            Self::Open => Self::OPEN_ID.to_string(),
+            Self::Req(r) => &r.id,
+            Self::Res(r) => &r.id,
+            Self::Shutdown => Self::SHUTDOWN,
         }
     }
 
@@ -32,7 +28,7 @@ impl Message {
             Self::Res(r) => Some(serde_json::to_value(r).expect("failed to serialize request")),
             _ => None,
         };
-        (self.id(), json)
+        (self.id().to_string(), json)
     }
 }
 
@@ -98,8 +94,14 @@ pub struct Response {
     pub id: String,
 }
 
+impl Request {
+    pub fn from_req(id: impl ToString, req: impl RpcRequest) -> Self {
+        req.into_request(id).unwrap()
+    }
+}
+
 impl Response {
-    pub fn new_ok(id: impl ToString, result: Option<serde_json::Value>) {
+    pub fn new_ok(id: impl ToString, result: Option<serde_json::Value>) -> Self {
         Self {
             jsonrpc: JSONRPC_FIELD.to_string(),
             result,
@@ -115,5 +117,9 @@ impl Response {
             error: Some(error),
             id: id.to_string(),
         }
+    }
+
+    pub fn from_res(id: impl ToString, res: impl RpcResponse) -> Self {
+        res.into_response(id).unwrap()
     }
 }
