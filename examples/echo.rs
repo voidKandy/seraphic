@@ -64,13 +64,13 @@ fn server() -> (MyConnection, IoThreads) {
 }
 
 fn client_loop(client_conn: MyConnection) {
-    println!("starting client loop");
+    tracing::warn!("starting client loop");
     let stdin = std::io::stdin();
     let mut input = String::new();
     let options = ["foo", "err"];
     let mut req_id = 0;
     loop {
-        println!("type any of the following:\n{options:#?}");
+        tracing::warn!("type any of the following:\n{options:#?}");
 
         if let Ok(bytes_read) = stdin.read_line(&mut input) {
             if bytes_read == 0 {
@@ -82,51 +82,55 @@ fn client_loop(client_conn: MyConnection) {
 
             match str {
                 _ if str == options[0] => {
-                    println!("selected {str} request");
+                    tracing::warn!("selected {str} request");
                     req = Some(FooRequest {}.into_request(req_id).unwrap());
                     req_id += 1;
                 }
                 _ if str == options[1] => {
-                    println!("selected {str} request");
+                    tracing::warn!("selected {str} request");
                     req = Some(TriggersErrorRequest {}.into_request(req_id).unwrap());
                     req_id += 1;
                 }
                 _ => {
-                    println!("no request associated with '{str}'");
+                    tracing::warn!("no request associated with '{str}'");
                 }
             }
             std::io::stdout().flush().unwrap();
             input.clear();
 
             if let Some(r) = req {
-                println!("client sending: {r:#?}");
+                tracing::warn!("client sending: {r:#?}");
                 client_conn.sender.send(r.into()).unwrap();
-                println!("send successful");
+                tracing::warn!("send successful");
             }
 
             match client_conn.receiver.try_recv() {
                 Ok(msg) => {
                     let wrapper = MyWrapper::try_from(msg).expect("failed to get wrapper");
                     match wrapper {
-                        MsgWrapper::Shutdown => {
-                            println!("received shutdown");
+                        MsgWrapper::Shutdown(_) => {
+                            tracing::warn!("received shutdown");
+                            return;
+                        }
+                        MsgWrapper::Exit => {
+                            tracing::warn!("received exit");
                             return;
                         }
                         MsgWrapper::Req { req, .. } => {
-                            println!(
+                            tracing::warn!(
                                 "client received request {req:#?}, this is unexpected but fine"
                             );
                         }
                         MsgWrapper::Res { res, .. } => {
-                            println!("client received response {res:#?}");
+                            tracing::warn!("client received response {res:#?}");
                         }
                     }
                 }
                 Err(TryRecvError::Empty) => {
-                    println!("received empty");
+                    tracing::warn!("received empty");
                 }
                 Err(TryRecvError::Disconnected) => {
-                    println!("disconnected");
+                    tracing::warn!("disconnected");
                     return;
                 }
             }
@@ -134,7 +138,7 @@ fn client_loop(client_conn: MyConnection) {
             std::io::stdout().flush().unwrap();
         }
     }
-    println!("Goodbye!");
+    tracing::warn!("Goodbye!");
 }
 
 /// Simply sends empty responses associated with received requests
@@ -142,7 +146,7 @@ fn server_loop(server_conn: MyConnection) {
     loop {
         match server_conn.receiver.try_recv() {
             Ok(msg) => {
-                println!("server received: {msg:#?}");
+                tracing::warn!("server received: {msg:#?}");
                 let wrapper = MyWrapper::try_from(msg).expect("failed to get wrapper");
                 match wrapper {
                     MsgWrapper::Req { id, req } => match req {
@@ -171,17 +175,23 @@ fn server_loop(server_conn: MyConnection) {
                         }
                     },
                     MsgWrapper::Res { res, .. } => {
-                        println!("server received response {res:#?}, this is unexpected but fine");
+                        tracing::warn!(
+                            "server received response {res:#?}, this is unexpected but fine"
+                        );
                     }
-                    MsgWrapper::Shutdown => {
-                        println!("received shutdown");
+                    MsgWrapper::Shutdown(_) => {
+                        tracing::warn!("received shutdown");
+                        return;
+                    }
+                    MsgWrapper::Exit => {
+                        tracing::warn!("received exit");
                         return;
                     }
                 }
             }
             Err(TryRecvError::Empty) => {}
             Err(TryRecvError::Disconnected) => {
-                println!("disconnected");
+                tracing::warn!("disconnected");
                 return;
             }
         }
@@ -191,7 +201,7 @@ fn server_loop(server_conn: MyConnection) {
 fn main() {
     // let task = std::thread::spawn(move || {
     //     let (server, threads) = server();
-    //     println!("server started");
+    //     tracing::warn!("server started");
     //     server.initialize(InitResponse {}).unwrap();
     //
     //     server_loop(server);
@@ -200,7 +210,7 @@ fn main() {
     // sleep(Duration::from_secs(1));
     //
     // let (client, threads) = client();
-    // println!("client started");
+    // tracing::warn!("client started");
     // client_loop(client);
     // threads.join().unwrap();
     //

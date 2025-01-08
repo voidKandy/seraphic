@@ -6,9 +6,10 @@ use std::{
     io::{self, stdin, stdout, BufReader},
     net::TcpStream,
     thread,
+    time::Duration,
 };
 
-use crossbeam_channel::{bounded, Receiver, Sender};
+use crossbeam_channel::{bounded, Receiver, Sender, TryRecvError};
 use packet::MessagePacket;
 
 use crate::{connection::InitializeConnectionMessage, msg::Message};
@@ -18,7 +19,7 @@ pub(crate) fn socket_transport<I: InitializeConnectionMessage>(
 ) -> (Sender<Message>, Receiver<Message>, IoThreads) {
     let (reader_receiver, reader) = make_reader::<I>(stream.try_clone().unwrap());
     let (writer_sender, writer) = make_write(stream);
-    let io_threads = make_io_threads(reader, writer);
+    let io_threads = IoThreads { reader, writer };
     (writer_sender, reader_receiver, io_threads)
 }
 
@@ -38,17 +39,12 @@ pub(crate) fn stdio_transport<I: InitializeConnectionMessage>(
         .unwrap();
     let (reader_sender, reader_receiver) = bounded::<Message>(0);
     let reader = thread::Builder::new()
-        .name("LspServerReader".to_owned())
+        .name("RPCServerReader".to_owned())
         .spawn(move || {
             let stdin = stdin();
             let mut stdin = stdin.lock();
             while let Some(msg) = MessagePacket::read(&mut stdin)? {
-                tracing::warn!("sending message {:#?}", msg);
-                let is_exit = if let Message::Res(r) = &msg {
-                    I::matches(r)
-                } else {
-                    false
-                };
+                let is_exit = matches!(msg, Message::Exit);
 
                 if let Err(e) = reader_sender.send(msg) {
                     return Err(io::Error::new(io::ErrorKind::Other, e));
@@ -65,20 +61,19 @@ pub(crate) fn stdio_transport<I: InitializeConnectionMessage>(
     (writer_sender, reader_receiver, threads)
 }
 
-// Creates an IoThreads
-pub(crate) fn make_io_threads(
-    reader: thread::JoinHandle<io::Result<()>>,
-    writer: thread::JoinHandle<io::Result<()>>,
-) -> IoThreads {
-    IoThreads { reader, writer }
-}
-
 pub struct IoThreads {
     reader: thread::JoinHandle<io::Result<()>>,
     writer: thread::JoinHandle<io::Result<()>>,
 }
 
 impl IoThreads {
+    pub(crate) fn new(
+        reader: thread::JoinHandle<io::Result<()>>,
+        writer: thread::JoinHandle<io::Result<()>>,
+    ) -> Self {
+        Self { reader, writer }
+    }
+
     pub fn join(self) -> io::Result<()> {
         match self.reader.join() {
             Ok(r) => r?,
@@ -97,19 +92,19 @@ fn make_reader<I: InitializeConnectionMessage>(
     stream: TcpStream,
 ) -> (Receiver<Message>, thread::JoinHandle<io::Result<()>>) {
     let (reader_sender, reader_receiver) = bounded::<Message>(0);
+    let mut should_exit = false;
     let reader = thread::spawn(move || {
         let mut buf_read = BufReader::new(stream);
-        while let Some(msg) = MessagePacket::read(&mut buf_read).unwrap() {
-            let is_exit = if let Message::Res(r) = &msg {
-                I::matches(r)
-            } else {
-                false
-            };
-            reader_sender.send(msg).unwrap();
-            if is_exit {
-                break;
+        while !should_exit {
+            if let Some(msg) = MessagePacket::read(&mut buf_read).unwrap() {
+                should_exit = matches!(msg, Message::Exit);
+
+                reader_sender
+                    .send_timeout(msg, Duration::from_secs(1))
+                    .unwrap();
             }
         }
+        tracing::debug!("reader out");
         Ok(())
     });
     (reader_receiver, reader)
@@ -117,11 +112,19 @@ fn make_reader<I: InitializeConnectionMessage>(
 
 fn make_write(mut stream: TcpStream) -> (Sender<Message>, thread::JoinHandle<io::Result<()>>) {
     let (writer_sender, writer_receiver) = bounded::<Message>(0);
+    let mut should_exit = false;
     let writer = thread::spawn(move || {
-        writer_receiver
-            .into_iter()
-            .try_for_each(|it| MessagePacket::write(&mut stream, &it))
-            .unwrap();
+        while !should_exit {
+            match writer_receiver.try_recv() {
+                Ok(msg) => {
+                    should_exit = matches!(msg, Message::Exit);
+                    MessagePacket::write(&mut stream, &msg)?;
+                }
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => break,
+            }
+        }
+        tracing::warn!("writer out");
         Ok(())
     });
     (writer_sender, writer)

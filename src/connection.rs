@@ -124,41 +124,68 @@ where
     //     )
     // }
 
-    /// If `req` is `Shutdown`, respond to it and return `true`, otherwise return `false`
+    /// If `message` is not `Shutdown` returns false`
+    /// Message::Shutdown(false): responds with Message::Shutdown(true) waits for an expected Message::Exit
+    /// Message::Shutdown(true): responds with Message::Exit and returns
     pub fn handle_shutdown(&self, message: &Message) -> Result<bool, Error> {
-        if !matches!(message, Message::Shutdown) {
-            return Ok(false);
-        }
-        let resp = Response::new_ok(Message::Shutdown.id(), None);
-        let _ = self.sender.send(resp.into());
+        tracing::debug!("handling shutdown with message: {message:#?}");
+        match message {
+            Message::Shutdown(true) => {
+                self.sender.send(Message::Exit).map_err(|err| {
+                    ErrorKind::other(
+                        &format!("failed to send exit message: {err:?}"),
+                        ErrorCode::InternalError,
+                    )
+                    .into()
+                })?;
+                return Ok(true);
+            }
+            Message::Shutdown(false) => {
+                self.sender.send(Message::Shutdown(true)).map_err(|err| {
+                    ErrorKind::other(
+                        &format!("failed to send exit message: {err:?}"),
+                        ErrorCode::InternalError,
+                    )
+                    .into()
+                })?
+            }
+            _ => return Ok(false),
+        };
+
+        tracing::warn!("waiting for exit");
         match &self
             .receiver
             .recv_timeout(std::time::Duration::from_secs(30))
         {
-            Ok(Message::Shutdown) => (),
+            Ok(Message::Exit) => {
+                tracing::warn!("received exit ");
+                Ok(true)
+            }
             Ok(msg) => {
-                return Err(ErrorKind::other(
+                tracing::warn!("received other msg ");
+                Err(ErrorKind::other(
                     &format!("unexpected message during shutdown: {msg:?}"),
                     ErrorCode::ServerErrorEnd,
                 )
                 .into())
             }
             Err(RecvTimeoutError::Timeout) => {
-                return Err(ErrorKind::other(
+                tracing::warn!("timeout ");
+                Err(ErrorKind::other(
                     "timed out waiting for exit notification",
                     ErrorCode::ServerErrorEnd,
                 )
                 .into())
             }
             Err(RecvTimeoutError::Disconnected) => {
-                return Err(ErrorKind::other(
+                tracing::warn!("disconnected early");
+                Err(ErrorKind::other(
                     "channel disconnected waiting for exit notification",
                     ErrorCode::ServerErrorEnd,
                 )
                 .into())
             }
         }
-        Ok(true)
     }
 }
 

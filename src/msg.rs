@@ -7,18 +7,25 @@ use crate::{MainErr, RpcRequest, RpcResponse, JSONRPC_FIELD};
 pub enum Message {
     Req(Request),
     Res(Response),
-    Shutdown,
+    /// bool is an ack flag
+    /// + true: Sender received a Shutdown(false)
+    /// + false: Sender initialized shutdown
+    Shutdown(bool),
+    /// Notification of the sender exiting the network
+    Exit,
 }
 
 pub type MessageId = String;
 
 impl Message {
     const SHUTDOWN: &'static str = "shutdown";
+    const EXIT: &'static str = "exit";
     pub fn id(&self) -> &str {
         match self {
             Self::Req(r) => &r.id,
             Self::Res(r) => &r.id,
-            Self::Shutdown => Self::SHUTDOWN,
+            Self::Shutdown(_) => Self::SHUTDOWN,
+            Self::Exit => Self::EXIT,
         }
     }
 

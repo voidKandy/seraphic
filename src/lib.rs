@@ -88,7 +88,23 @@ pub trait RpcRequest:
 pub enum MsgWrapper<Req, Res> {
     Req { id: MessageId, req: Req },
     Res { id: MessageId, res: Res },
-    Shutdown,
+    Shutdown(bool),
+    Exit,
+}
+
+impl<Req, Res> Into<msg::Message> for MsgWrapper<Req, Res>
+where
+    Req: RequestWrapper,
+    Res: ResponseWrapper,
+{
+    fn into(self) -> msg::Message {
+        match self {
+            Self::Req { id, req } => Message::Req(req.into_req(id)),
+            Self::Res { id, res } => Message::Res(res.into_res(id)),
+            Self::Exit => Message::Exit,
+            Self::Shutdown(b) => Message::Shutdown(b),
+        }
+    }
 }
 
 impl<Req, Res> TryFrom<msg::Message> for MsgWrapper<Req, Res>
@@ -107,7 +123,8 @@ where
                 id: res.id.clone(),
                 res: Res::try_from_res(res)?,
             }),
-            msg::Message::Shutdown => Ok(Self::Shutdown),
+            msg::Message::Shutdown(b) => Ok(Self::Shutdown(b)),
+            msg::Message::Exit => Ok(Self::Exit),
         }
     }
 }

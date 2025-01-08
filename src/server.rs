@@ -30,6 +30,7 @@ where
     /// `initialize_start`/`initialize_finish`.
     pub fn initialize(&self, response: I::Response) -> Result<Request, Error> {
         let init_req = self.initialize_start()?;
+        tracing::warn!("server got init req");
 
         self.initialize_finish(response)?;
 
@@ -95,16 +96,14 @@ where
     /// Finishes the initialization process by sending an `InitializeResult` to the client
     pub fn initialize_finish(&self, init_res: I::Response) -> Result<(), Error> {
         let resp = I::init_response(init_res);
-        self.conn.sender.send(resp.into()).unwrap();
-        match &self.conn.receiver.recv() {
-            Ok(Message::Res(res)) if I::Response::try_from_response(&res).is_ok() => Ok(()),
-            Ok(msg) => Err(ErrorKind::other(
-                &format!(r#"expected Message::Open, got: {msg:?}"#),
-                ErrorCode::ServerErrorStart,
+        self.conn.sender.send(resp.into()).map_err(|e| {
+            ErrorKind::other(
+                &format!("server failed to send initialization response: {e:#?}"),
+                ErrorCode::InternalError,
             )
-            .into()),
-            Err(RecvError) => Err(ErrorKind::Disconnect.into()),
-        }
+            .into()
+        })?;
+        Ok(())
     }
 
     /// Finishes the initialization process as described in [`Self::initialize_finish`] as

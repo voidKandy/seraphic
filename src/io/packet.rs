@@ -18,7 +18,7 @@ const fn header_size() -> usize {
 
 impl<T> From<&T> for TcpPacket<T>
 where
-    T: Serialize,
+    T: Serialize + std::fmt::Debug,
 {
     fn from(r: &T) -> Self {
         let vec = serde_json::to_vec(r).expect("T will not work");
@@ -29,8 +29,6 @@ where
         );
 
         let size: u32 = vec.len() as u32;
-
-        tracing::warn!("serialized payload of size: {size}");
 
         let mut buffer = Vec::with_capacity(header_size() + vec.len());
         buffer.extend_from_slice(&size.to_le_bytes());
@@ -57,13 +55,12 @@ impl<'de, T> serde::Deserialize<'de> for TcpPacket<T> {
 
 impl<T> TcpPacket<T>
 where
-    T: serde::Serialize + for<'de> Deserialize<'de>,
+    T: serde::Serialize + for<'de> Deserialize<'de> + std::fmt::Debug,
 {
     pub fn read(inp: &mut dyn BufRead) -> std::io::Result<Option<T>> {
         let mut header = [0u8; header_size()];
         let mut buffer = [0u8; 1024].to_vec();
         let mut size = None;
-        tracing::warn!("reading");
         loop {
             match inp.read_exact(&mut header) {
                 Ok(_) => {
@@ -71,8 +68,8 @@ where
                         break;
                     }
                     let payload_size = u32::from_le_bytes(header) as usize;
-                    tracing::warn!("expecting payload of size: {payload_size}");
-                    size = Some(payload_size)
+                    size = Some(payload_size);
+                    break;
                 }
                 Err(err) => {
                     return Err(std::io::Error::other(format!(
@@ -90,8 +87,6 @@ where
                 String::from_utf8_lossy(&buffer),
             ))
         })?;
-        // let buf = String::from_utf8(buf).map_err(invalid_data)?;
-        // log::debug!("< {}", buf);
         Ok(Some(typ))
     }
 
