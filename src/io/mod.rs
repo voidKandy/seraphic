@@ -53,13 +53,13 @@ impl IoThreads {
     }
 
     pub fn join(self) -> io::Result<()> {
-        tracing::warn!("joining threads");
+        tracing::debug!("joining threads");
 
         match self.reader.join() {
             Ok(r) => r?,
             Err(err) => std::panic::panic_any(err),
         }
-        tracing::warn!("reader joined");
+        tracing::debug!("reader joined");
         match self.writer.join() {
             Ok(r) => r?,
             Err(err) => {
@@ -67,7 +67,7 @@ impl IoThreads {
             }
         }
 
-        tracing::warn!("writer joined");
+        tracing::debug!("writer joined");
 
         Ok(())
     }

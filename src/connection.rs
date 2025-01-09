@@ -142,7 +142,7 @@ where
             .recv_timeout(std::time::Duration::from_secs(30))
         {
             Ok(Message::Exit) => {
-                tracing::warn!("received exit ");
+                tracing::debug!("received exit ");
                 Ok(true)
             }
             Ok(msg) => Err(ErrorKind::other(

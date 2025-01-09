@@ -211,8 +211,10 @@ pub fn derive_res_wrapper(input: TokenStream) -> TokenStream {
 
                 from_res_body = quote! {
                     #from_res_body
-                    if let Ok(r) = #enum_typ::try_from_response(&res)? {
-                        return Ok(Self::#id(r));
+                    match #enum_typ::try_from_response(&res)? {
+                        Ok(r) => {Ok(Ok(Self::#id(r)))}
+                        Err(err) => {Ok(Err(err))}
+
                     }
                 };
             }
@@ -226,9 +228,8 @@ pub fn derive_res_wrapper(input: TokenStream) -> TokenStream {
             };
 
             let from_res = quote! {
-                fn try_from_res(res: seraphic::Response) -> std::result::Result<Self,Box<dyn std::error::Error + Send + Sync + 'static>> {
+                fn try_from_res(res: seraphic::Response) -> std::result::Result<std::result::Result<Self, seraphic::error::Error>, Box<dyn std::error::Error + Send + Sync + 'static>> {
                     #from_res_body
-                    Err("Could not get response".into())
                 }
             };
 

@@ -88,6 +88,7 @@ pub trait RpcRequest:
 pub enum MsgWrapper<Req, Res> {
     Req { id: MessageId, req: Req },
     Res { id: MessageId, res: Res },
+    Err { id: MessageId, err: Error },
     Shutdown(bool),
     Exit,
 }
@@ -101,6 +102,12 @@ where
         match self {
             Self::Req { id, req } => Message::Req(req.into_req(id)),
             Self::Res { id, res } => Message::Res(res.into_res(id)),
+            Self::Err { id, err } => Message::Res(Response {
+                jsonrpc: JSONRPC_FIELD.to_string(),
+                result: None,
+                error: Some(err),
+                id,
+            }),
             Self::Exit => Message::Exit,
             Self::Shutdown(b) => Message::Shutdown(b),
         }
@@ -119,10 +126,13 @@ where
                 id: req.id.clone(),
                 req: Req::try_from_req(req)?,
             }),
-            msg::Message::Res(res) => Ok(Self::Res {
-                id: res.id.clone(),
-                res: Res::try_from_res(res)?,
-            }),
+            msg::Message::Res(res) => {
+                let id = res.id.clone();
+                match Res::try_from_res(res)? {
+                    Ok(res) => Ok(Self::Res { id, res }),
+                    Err(err) => Ok(Self::Err { id, err }),
+                }
+            }
             msg::Message::Shutdown(b) => Ok(Self::Shutdown(b)),
             msg::Message::Exit => Ok(Self::Exit),
         }
@@ -158,7 +168,7 @@ pub trait ResponseWrapper: std::fmt::Debug {
     fn into_res(self, id: impl ToString) -> Response
     where
         Self: Sized;
-    fn try_from_res(res: Response) -> MainResult<Self>
+    fn try_from_res(res: Response) -> MainResult<Result<Self, Error>>
     where
         Self: Sized;
 }

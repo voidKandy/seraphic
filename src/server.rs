@@ -30,7 +30,7 @@ where
     /// `initialize_start`/`initialize_finish`.
     pub fn initialize(&self, response: I::Response) -> Result<Request, Error> {
         let init_req = self.initialize_start()?;
-        tracing::warn!("server got init req");
+        tracing::debug!("server got init req");
 
         self.initialize_finish(response)?;
 
@@ -66,7 +66,7 @@ where
                 Err(RecvTimeoutError::Disconnected) => return Err(ErrorKind::Disconnect.into()),
             };
 
-            println!("message: {msg:#?}");
+            // println!("message: {msg:#?}");
             match msg {
                 Message::Req(req) if I::matches(&req) => return Ok(req),
                 // Respond to non-initialize requests with ServerNotInitialized
