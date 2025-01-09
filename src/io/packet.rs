@@ -1,7 +1,7 @@
 use crate::msg::Message;
 use serde::{Deserialize, Serialize};
 use std::{
-    io::{BufRead, Write},
+    io::{BufRead, ErrorKind, Write},
     marker::PhantomData,
 };
 
@@ -71,9 +71,16 @@ where
                     size = Some(payload_size);
                     break;
                 }
+                Err(err)
+                    if err.kind() == ErrorKind::UnexpectedEof && header == [0u8; header_size()] =>
+                {
+                    tracing::debug!("read received empty, channel must have closed");
+                    return Ok(None);
+                }
                 Err(err) => {
                     return Err(std::io::Error::other(format!(
-                        "unexepect error when reading: {err:#?}",
+                        "unexepect error when reading: {err:#?}\nbuffer: {}",
+                        String::from_utf8_lossy(&buffer)
                     )));
                 }
             }

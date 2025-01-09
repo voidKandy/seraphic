@@ -5,7 +5,11 @@ pub(super) mod packet;
 use std::{
     io::{self, stdin, stdout, BufReader},
     net::TcpStream,
-    thread,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    thread::{self, park_timeout},
     time::Duration,
 };
 
@@ -17,114 +21,112 @@ use crate::{connection::InitializeConnectionMessage, msg::Message};
 pub(crate) fn socket_transport<I: InitializeConnectionMessage>(
     stream: TcpStream,
 ) -> (Sender<Message>, Receiver<Message>, IoThreads) {
-    let (reader_receiver, reader) = make_reader::<I>(stream.try_clone().unwrap());
-    let (writer_sender, writer) = make_write(stream);
-    let io_threads = IoThreads { reader, writer };
+    let shutdown = Arc::new(AtomicBool::new(false));
+    let (reader_receiver, reader) =
+        make_reader::<I>(stream.try_clone().unwrap(), Arc::clone(&shutdown));
+    let (writer_sender, writer) = make_writer(stream, Arc::clone(&shutdown));
+    let io_threads = IoThreads {
+        reader,
+        writer,
+        shutdown_signal: shutdown,
+    };
     (writer_sender, reader_receiver, io_threads)
-}
-
-/// Creates an RPC connection via stdio.
-pub(crate) fn stdio_transport<I: InitializeConnectionMessage>(
-) -> (Sender<Message>, Receiver<Message>, IoThreads) {
-    let (writer_sender, writer_receiver) = bounded::<Message>(0);
-    let writer = thread::Builder::new()
-        .name("RPCServerWriter".to_owned())
-        .spawn(move || {
-            let stdout = stdout();
-            let mut stdout = stdout.lock();
-            writer_receiver
-                .into_iter()
-                .try_for_each(|it| MessagePacket::write(&mut stdout, &it))
-        })
-        .unwrap();
-    let (reader_sender, reader_receiver) = bounded::<Message>(0);
-    let reader = thread::Builder::new()
-        .name("RPCServerReader".to_owned())
-        .spawn(move || {
-            let stdin = stdin();
-            let mut stdin = stdin.lock();
-            while let Some(msg) = MessagePacket::read(&mut stdin)? {
-                let is_exit = matches!(msg, Message::Exit);
-
-                if let Err(e) = reader_sender.send(msg) {
-                    return Err(io::Error::new(io::ErrorKind::Other, e));
-                }
-
-                if is_exit {
-                    break;
-                }
-            }
-            Ok(())
-        })
-        .unwrap();
-    let threads = IoThreads { reader, writer };
-    (writer_sender, reader_receiver, threads)
 }
 
 pub struct IoThreads {
     reader: thread::JoinHandle<io::Result<()>>,
     writer: thread::JoinHandle<io::Result<()>>,
+    shutdown_signal: Arc<AtomicBool>,
 }
 
 impl IoThreads {
     pub(crate) fn new(
         reader: thread::JoinHandle<io::Result<()>>,
         writer: thread::JoinHandle<io::Result<()>>,
+        shutdown_signal: Arc<AtomicBool>,
     ) -> Self {
-        Self { reader, writer }
+        Self {
+            reader,
+            writer,
+            shutdown_signal,
+        }
     }
 
     pub fn join(self) -> io::Result<()> {
+        tracing::warn!("joining threads");
+
         match self.reader.join() {
             Ok(r) => r?,
             Err(err) => std::panic::panic_any(err),
         }
+        tracing::warn!("reader joined");
         match self.writer.join() {
-            Ok(r) => r,
+            Ok(r) => r?,
             Err(err) => {
                 std::panic::panic_any(err);
             }
         }
+
+        tracing::warn!("writer joined");
+
+        Ok(())
+    }
+
+    pub fn force_shutdown(self) -> io::Result<()> {
+        self.shutdown_signal.store(true, Ordering::Relaxed);
+        self.join()?;
+        Ok(())
     }
 }
 
 fn make_reader<I: InitializeConnectionMessage>(
     stream: TcpStream,
+    shutdown_signal: Arc<AtomicBool>,
 ) -> (Receiver<Message>, thread::JoinHandle<io::Result<()>>) {
-    let (reader_sender, reader_receiver) = bounded::<Message>(0);
-    let mut should_exit = false;
+    let (reader_sender, reader_receiver) = bounded::<Message>(5);
     let reader = thread::spawn(move || {
         let mut buf_read = BufReader::new(stream);
-        while !should_exit {
+        while !shutdown_signal.load(Ordering::Relaxed) {
             if let Some(msg) = MessagePacket::read(&mut buf_read).unwrap() {
-                should_exit = matches!(msg, Message::Exit);
+                tracing::debug!("got message: {msg:#?}");
+                if matches!(msg, Message::Exit) {
+                    shutdown_signal.store(true, Ordering::Relaxed);
+                }
 
-                reader_sender
-                    .send_timeout(msg, Duration::from_secs(1))
-                    .unwrap();
+                reader_sender.send(msg).unwrap();
             }
         }
-        tracing::debug!("reader out");
+        tracing::debug!("reader should_join");
         Ok(())
     });
     (reader_receiver, reader)
 }
 
-fn make_write(mut stream: TcpStream) -> (Sender<Message>, thread::JoinHandle<io::Result<()>>) {
-    let (writer_sender, writer_receiver) = bounded::<Message>(0);
-    let mut should_exit = false;
+fn make_writer(
+    mut stream: TcpStream,
+    shutdown_signal: Arc<AtomicBool>,
+) -> (Sender<Message>, thread::JoinHandle<io::Result<()>>) {
+    let (writer_sender, writer_receiver) = bounded::<Message>(5);
     let writer = thread::spawn(move || {
-        while !should_exit {
+        while !shutdown_signal.load(Ordering::Relaxed) {
             match writer_receiver.try_recv() {
                 Ok(msg) => {
-                    should_exit = matches!(msg, Message::Exit);
+                    tracing::debug!("going to send msg: {msg:#?}");
+                    if matches!(msg, Message::Exit) {
+                        shutdown_signal.store(true, Ordering::Relaxed);
+                    }
                     MessagePacket::write(&mut stream, &msg)?;
                 }
-                Err(TryRecvError::Empty) => {}
-                Err(TryRecvError::Disconnected) => break,
+                Err(TryRecvError::Empty) => {
+                    thread::sleep(Duration::from_millis(100));
+                }
+                Err(TryRecvError::Disconnected) => {
+                    shutdown_signal.store(true, Ordering::Relaxed);
+                    break;
+                }
             }
         }
-        tracing::warn!("writer out");
+        tracing::debug!("writer should join");
         Ok(())
     });
     (writer_sender, writer)

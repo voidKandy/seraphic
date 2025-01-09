@@ -58,21 +58,6 @@ impl<I> Connection<I>
 where
     I: InitializeConnectionMessage,
 {
-    /// Create connection over standard in/standard out.
-    ///
-    /// Use this to create a real language server.
-    pub fn stdio() -> (Connection<I>, IoThreads) {
-        let (sender, receiver, io_threads) = crate::io::stdio_transport::<I>();
-        (
-            Connection {
-                sender,
-                receiver,
-                init_request_marker: PhantomData,
-            },
-            io_threads,
-        )
-    }
-
     /// Open a connection over tcp.
     /// This call blocks until a connection is established.
     pub fn connect<A: ToSocketAddrs>(addr: A) -> std::io::Result<(Connection<I>, IoThreads)> {
@@ -128,7 +113,6 @@ where
     /// Message::Shutdown(false): responds with Message::Shutdown(true) waits for an expected Message::Exit
     /// Message::Shutdown(true): responds with Message::Exit and returns
     pub fn handle_shutdown(&self, message: &Message) -> Result<bool, Error> {
-        tracing::debug!("handling shutdown with message: {message:#?}");
         match message {
             Message::Shutdown(true) => {
                 self.sender.send(Message::Exit).map_err(|err| {
@@ -147,12 +131,12 @@ where
                         ErrorCode::InternalError,
                     )
                     .into()
-                })?
+                })?;
             }
             _ => return Ok(false),
         };
 
-        tracing::warn!("waiting for exit");
+        tracing::debug!("waiting for exit");
         match &self
             .receiver
             .recv_timeout(std::time::Duration::from_secs(30))
@@ -161,30 +145,21 @@ where
                 tracing::warn!("received exit ");
                 Ok(true)
             }
-            Ok(msg) => {
-                tracing::warn!("received other msg ");
-                Err(ErrorKind::other(
-                    &format!("unexpected message during shutdown: {msg:?}"),
-                    ErrorCode::ServerErrorEnd,
-                )
-                .into())
-            }
-            Err(RecvTimeoutError::Timeout) => {
-                tracing::warn!("timeout ");
-                Err(ErrorKind::other(
-                    "timed out waiting for exit notification",
-                    ErrorCode::ServerErrorEnd,
-                )
-                .into())
-            }
-            Err(RecvTimeoutError::Disconnected) => {
-                tracing::warn!("disconnected early");
-                Err(ErrorKind::other(
-                    "channel disconnected waiting for exit notification",
-                    ErrorCode::ServerErrorEnd,
-                )
-                .into())
-            }
+            Ok(msg) => Err(ErrorKind::other(
+                &format!("unexpected message during shutdown: {msg:?}"),
+                ErrorCode::ServerErrorEnd,
+            )
+            .into()),
+            Err(RecvTimeoutError::Timeout) => Err(ErrorKind::other(
+                "timed out waiting for exit notification",
+                ErrorCode::ServerErrorEnd,
+            )
+            .into()),
+            Err(RecvTimeoutError::Disconnected) => Err(ErrorKind::other(
+                "channel disconnected waiting for exit notification",
+                ErrorCode::ServerErrorEnd,
+            )
+            .into()),
         }
     }
 }
