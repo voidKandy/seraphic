@@ -25,116 +25,124 @@ A super light JSON RPC 2.0 implementation.
 > **_WARNING_**:
 This is very early in development and is subject to significant change.
 
+## What is `seraphic`?
+`seraphic` provides a straightforward way of defining your very own JSON RPC 2.0 based protocol, including an easy way to spin up clients and servers.
 
-## Creating a server
-As of right now, `seraphic` only handles the creation of servers. Clients can be created any way you choose, so long as you dial the correct address and send messages compliant with the [JSON RPC 2.0 specification](https://www.jsonrpc.org/specification).
-
-### `RpcListeningThread`
+## Getting started
+#### `RpcNamespace` 
+> A trait for defining how the methods of your RPC protocol are separated
 ```rust
-pub struct RpcListeningThread {
-    pub recv: tokio::sync::mpsc::Receiver<Request>,
-    pub sender: tokio::sync::mpsc::Sender<Response>,
-    _thread: JoinHandle<()>,
-}
-```
-This is the main struct for handling all server operations, one can be created with `RpcListeningThread::new`. Requests can be polled from `recv` , and responses can be sent back through `sender`.
-```rust
-let server_thread = RpcListeningThread::new("127.0.0.1:3000")?;
-if let Some(req) = server_thread.recv.recv().await {
-    // Do some work to get response
-    server_thread.sender.send(response).await?;
-}
-```
-
-## Important traits
-Sending JSON through a server is easy enough, but what's really helpful about `seraphic` is the way it abstracts Request Methods, expected Responses, and errors. These are the traits used to facilitate this abstraction:
-+ `RpcNamespace` - Facilitates the management of method namespaces.
-+ `RpcRequest` - Defines the namespace/method a request is associated with & facilitates serialization to/from the `socket::Request` struct.
-+ `RpcRequestWrapper` - a wrapper struct meant to contain all requests your server accepts
-+ `RpcResponse` - Simply a marker trait for marking a struct as what you expect to be returned from the successful processing of a request.
-The best thing about all these traits is that they each have a derive implementation for minimal boilerplate!
-+ `RpcHandler` - to be implemented on whatever you are using to process requests to return responses
-
-## Example
-```rust
-// This will define the namespaces "foo", "bar", and "baz"
-#[derive(RpcNamespace)]
+#[derive(RpcNamespace, Clone, Copy, PartialEq, Eq)]
+#[namespace(separator=":")]
 enum MyNamespace {
     Foo,
     Bar,
-    Baz,
-}
-
-// The rpc_request derive attribute *requires* you pass a namespace argument, which is formatted as "<Namespace Struct Name>:<variant>"
-// The RpcRequest derive macro expects the struct it is derived on to end in the suffix 'Request', and for there to be another struct with the same prefix, but with 'Response' as the suffix.
-// RpcRequest's Derive macro will expand to implement RpcResponse on it's associated response struct
-#[derive(RpcRequest, Debug, Clone, Serialize, Deserialize)]
-#[rpc_request(namespace = "MyNamespace:bar")]
-struct SomeBarRequest {
-    param1: String,
-    param2: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct SomeBarResponse {
-    value1: u32,
-    value2: String,
-}
-
-//  If you wish to use a struct by a different name for your expected response object, you can pass it in the rpc_request attribute.
-#[derive(RpcRequest, Debug, Clone, Serialize, Deserialize)]
-#[rpc_request(namespace = "MyNamespace:baz", response="WorksAsResponseStruct")]
-struct SomeBazRequest {
-    param1: String,
-    param2: u32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct WorksAsResponseStruct {
-    value1: u32,
-    value2: String,
+    Baz
 }
 ```
-With the above code, we have defined two request object, each have been mapped to their own methods:
-+ `SomeBarRequest` - "bar_someBar"
-+ `SomeBazRequest` - "baz_someBaz"
+The variants of the namespace enum define the method namespaces of your protocol. They are simply the variants' names in lowercase; so the above code will define your methods to have the namespaces "foo", "bar" and "baz", with methods appearing after a ':'.
 
-Now we have defined namespacing for specific kinds of methods in our api! The next step is to create a `RpcRequestWrapper` so we can easily hande parsing all of our requests: 
+If the `separator` argument isn't passed it defaults to '_'.
+#### `RpcRequest` & `RpcResponse` 
+> traits for defining the requests/responses that are used by your protocol
 ```rust
-// As long as each variant in this enum implements RpcRequest, this derive macro should work
-#[derive(RpcRequestWrapper, Debug)]
-enum RequestWrapper {
-    SomeBaz(SomeBazRequest),
-    SomeBar(SomeBarRequest),
+#[derive(RpcRequest, Clone, Deserialize, Serialize, Debug)]
+#[rpc_request(namespace = "MyNamespace:foo")]
+struct SomeFooRequest {
+    field1: String,
+    field2: u32,
+    field3: serde_json::Value,
 }
 ```
-Now when we receive a request through an `RpcListeningThread`, we can coerce it to this wrapper struct and handle all possible requests:
-```rust
-if let Some(req) = server_thread.recv.recv().await {
-    let wrapper = RequestWrapper::try_from_rpc_req(req)?;
-    let response = match wrapper {
-        RequestWrapper::SomeBaz(r) => // do some work & return a response
-        RequestWrapper::SomeBar(r) => // do some work & return a response
-    };
-    server_thread.sender.send(response).await?;
-}
-```
-## `RpcHandler`
-I have also created a trait called `RpcHandler`. It may add *too much* abstraction, so it may be removed in the future, but it compartmentalizes handling requests a little more.
-```rust
-pub type ProcessRequestResult = Result<serde_json::Value, socket::Error>;
-#[allow(async_fn_in_trait)]
-pub trait RpcHandler {
-    type ReqWrapper: RpcRequestWrapper;
-    /// Handler does whatever it does with request and returns either a socket request `result` field, or an error
-    async fn process_request(&mut self, req: Self::ReqWrapper) -> MainResult<ProcessRequestResult>;
-    async fn handle_rpc_request(&mut self, req: socket::Request) -> MainResult<socket::Response> {
-        let req_id = req.id.clone();
-        let wrapper = Self::ReqWrapper::try_from_rpc_req(req)?;
-        let result = self.process_request(wrapper).await?;
-        Ok(socket::Response::from((result, req_id)))
+Each method in your namespace maps to a *single* request you've defined. Method names are defined by the whatever the name of your request is before the word "Request". So, the above struct's corresponding method would be "foo:someFoo". The syntax for mapping a request to a namespace is: `<Namespace struct name>:<namespace variant>`
+> **NOTE:**
+> 
+> Any struct you want to derive `RpcRequest` on MUST have a name ending with the word "Request" and all of it's fields MUST be types that implement `serde::Serialize` and `serde::Deserialize`
+
+Each `RpcRequest` should have a corresponding `RpcResponse` struct. This can be done in two ways: 
++ Make sure another struct with *the same prefix* but with the word "Response" instead of "Request" is in scope
+    ```rust 
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct SomeFooResponse {}
+    ```
++ pass a `response` argument in the `rpc_request` proc macro attribute
+    ```rust
+    #[derive(RpcRequest, Clone, Deserialize, Serialize, Debug)]
+    #[rpc_request(namespace = "MyNamespace:foo", response="SomeResponse")]
+    struct SomeFooRequest {
+        ...
     }
+    #[derive(Debug, Clone, Serialize, Deserialize)]
+    struct SomeResponse {}
+    
+    // If some response isn't the response to some other `RpcRequest` already
+    // This is fine because `RpcResponse` is a flag trait
+    impl RpcResponse for SomeResponse {}
+    ```
+**Keep in mind**:  
++ Both `RpcRequest` and `RpcResponse` structs MUST implement `serde::Serialize`, `serde::Deserialize`, `Clone` and `Debug`
++ mutliple `RpcRequests` can have the same corresponding `RpcResponse`
++ If a `response` argument *is* passed in the `rpc_request` macros, the macro assumes the struct already implements `RpcResponse`, if not, the proc macros assumes the corresponding *Response* struct *does not* implement `RpcResponse` and will implement it for you.
+
+#### `RequestWrapper` and `ResponseWrapper` 
+> simply enums that include all of the `RpcRequest` and `RpcResponse` structs included inyour protocol
+```rust
+#[derive(RequestWrapper, Debug)]
+enum ReqWrapper {
+    Foo(SomeFooRequest),
+}
+#[derive(ResponseWrapper, Debug)]
+enum ResWrapper {
+    Foo(SomeFooResponse),
 }
 ```
+These structs need only to implement `Debug`
+#### `MsgWrapper<Rq,Rs>` 
+> This is simply defined as a wrapper around both of your `RequestWrapper`/`ResponseWrapper`.
+```rust
+type MyWrapper = MsgWrapper<ReqWrapper, ResWrapper>;
+```
+#### `Connection<I>`
+> The backbone of `Server` and `Client`
 
-Since `socket::Response` implements `From<ProcessRequestResult>` it makes managing returning error/successful responses a little easier. But this trait is not required to implement a JSON RPC api.
+`I` is a type that implements `RpcRequest`, it defines the *request* and *response* that are exchanged by `Client` and `Server` when they first connect
+```rust
+#[derive(RpcRequest, Clone, Deserialize, Serialize, Debug)]
+#[rpc_request(namespace = "MyNamespace:foo")]
+struct InitRequest {}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct InitResponse {}
+impl InitializeConnectionMessage for InitRequest {
+    const ID: &str = "initialize";
+}
+
+type MyConnection = Connection<InitRequest>;
+```
+> **NOTE:**
+> 
+> While the `rpc_request` proc macro requires that you pass a `namespace` argument, the initial request and response structs *do not* need to be included in your wrappers if they are *only* used for connection initialization. The `RpcRequest` restraint on the initial request will most likely change to it's own trait down the line.
+
+## Client/Server
+The `Server<I>` and `Client<I>` structs implement `From<Connection<I>>`, so creating them is as easy as:
+```rust
+let serv_conn = Connection::<InitRequest>::listen("127.0.0.1:3000")?;
+let server = Server::<InitRequest>::from(conn);
+
+let client_conn = Connection::<InitRequest>::connect("127.0.0.1:3000")?;
+let client = Client::<InitRequest>::from(conn);
+```
+Once both structs are instantiated, a connection should be initialized using your initial request struct (`InitRequest` in this example)
+```rust
+// this will hang until the server receives an `InitRequest` from the client, it will then send it's response and return the request it received
+let init_req = server.initialize(InitResponse {})?;
+
+// Does the inverse of what Server::<I>::initilialize does
+let init_res = client.initialize(InitRequest {})?;
+```
+Once the connection has been initialized you can have each your client and server enter a loop and do whatever they need to.
+> **Note**
+> Make sure to call `join` on both `server.threads` and `client.threads` after you define your loop logic. 
+
+Referring to the [Echo Example](https://github.com/voidKandy/seraphic/tree/refactor/examples) might be helpful
+
+
