@@ -1,29 +1,73 @@
-use std::marker::PhantomData;
-
-use crossbeam_channel::{RecvError, RecvTimeoutError};
-
 use crate::{
     connection::{Connection, InitializeConnectionMessage},
     error::{Error, ErrorCode, ErrorKind},
-    io::IoThreads,
-    MainResult, Message, Request, Response, RpcRequest, RpcResponse,
+    Message, Request, Response, RpcResponse,
+};
+use crossbeam_channel::RecvTimeoutError;
+use std::{
+    marker::PhantomData,
+    net::{SocketAddr, TcpListener, ToSocketAddrs},
 };
 
-pub struct Server<I> {
+pub struct ServerConnection<I> {
     pub conn: Connection<I>,
-    pub threads: IoThreads,
+    pub client_addr: SocketAddr,
 }
 
-impl<I> From<(Connection<I>, IoThreads)> for Server<I> {
-    fn from((conn, threads): (Connection<I>, IoThreads)) -> Self {
-        Self { conn, threads }
+struct IncomingConnections<I> {
+    listener: TcpListener,
+    marker: PhantomData<I>,
+}
+
+impl<I> IncomingConnections<I> {
+    fn bind(addr: impl ToSocketAddrs) -> std::io::Result<Self> {
+        let listener = TcpListener::bind(addr)?;
+        Ok(Self {
+            listener,
+            marker: PhantomData,
+        })
     }
 }
 
-impl<I> Server<I>
+impl<I> Iterator for IncomingConnections<I>
 where
     I: InitializeConnectionMessage,
 {
+    type Item = std::io::Result<ServerConnection<I>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        match self.listener.accept() {
+            Ok((stream, addr)) => {
+                let conn = Connection::<I>::socket_transport(stream);
+                Some(Ok(ServerConnection {
+                    conn,
+                    client_addr: addr,
+                }))
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                // Non-blocking mode: No connection yet
+                None
+            }
+            Err(e) => {
+                tracing::error!("Failed to accept connection: {}", e);
+                Some(Err(e))
+            }
+        }
+    }
+}
+
+impl<I> ServerConnection<I>
+where
+    I: InitializeConnectionMessage,
+{
+    /// Given an address, return an iterator over incoming server connections
+    pub fn incoming(
+        addr: impl ToSocketAddrs,
+    ) -> std::io::Result<impl Iterator<Item = std::io::Result<Self>>> {
+        let listener = IncomingConnections::bind(addr)?;
+        Ok(listener)
+    }
+
     /// Initialize the connection. Sends the I::Response
     /// to the client and returns I as a Request on success.
     /// If more fine-grained initialization is required use

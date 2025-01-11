@@ -1,8 +1,9 @@
 #[cfg(feature = "client")]
 pub mod client;
+/// a good amount of this module has been ripped directly from [`lsp_server`](https://docs.rs/lsp-server/latest/src/lsp_server/stdio.rs.html)
+/// ^^ Many thanks to these guys ^^
 pub mod connection;
 pub mod error;
-pub mod io;
 pub mod msg;
 #[cfg(feature = "server")]
 pub mod server;

@@ -1,29 +1,24 @@
-use std::marker::PhantomData;
-
-use crossbeam_channel::RecvError;
-
 use crate::{
     connection::{Connection, InitializeConnectionMessage},
     error::{ErrorCode, ErrorKind},
-    io::IoThreads,
     MainResult, Response, RpcRequest, RpcResponse,
 };
+use std::net::{TcpStream, ToSocketAddrs};
 
-pub struct Client<I> {
+pub struct ClientConnection<I> {
     pub conn: Connection<I>,
-    pub threads: IoThreads,
 }
 
-impl<I> From<(Connection<I>, IoThreads)> for Client<I> {
-    fn from((conn, threads): (Connection<I>, IoThreads)) -> Self {
-        Self { conn, threads }
-    }
-}
-
-impl<I> Client<I>
+impl<I> ClientConnection<I>
 where
     I: InitializeConnectionMessage,
 {
+    pub fn connect(addr: impl ToSocketAddrs) -> std::io::Result<Self> {
+        let stream = TcpStream::connect(addr)?;
+        let conn = Connection::<I>::socket_transport(stream);
+        Ok(Self { conn })
+    }
+
     /// Initializes the connection with a server by sending an initialization request
     /// Hangs until an inialization response is returned
     /// Outer Errors if serialization fails

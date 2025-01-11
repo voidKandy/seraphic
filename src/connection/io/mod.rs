@@ -1,9 +1,6 @@
 pub(super) mod packet;
-/// this module has been ripped directly from `lsp_server`
-/// https://docs.rs/lsp-server/latest/src/lsp_server/stdio.rs.html
-/// ^^ Many thanks to these guys ^^
 use std::{
-    io::{self, stdin, stdout, BufReader},
+    io::{self, BufReader},
     net::TcpStream,
     sync::{
         atomic::{AtomicBool, Ordering},
@@ -18,29 +15,14 @@ use packet::MessagePacket;
 
 use crate::{connection::InitializeConnectionMessage, msg::Message};
 
-pub(crate) fn socket_transport<I: InitializeConnectionMessage>(
-    stream: TcpStream,
-) -> (Sender<Message>, Receiver<Message>, IoThreads) {
-    let shutdown = Arc::new(AtomicBool::new(false));
-    let (reader_receiver, reader) =
-        make_reader::<I>(stream.try_clone().unwrap(), Arc::clone(&shutdown));
-    let (writer_sender, writer) = make_writer(stream, Arc::clone(&shutdown));
-    let io_threads = IoThreads {
-        reader,
-        writer,
-        shutdown_signal: shutdown,
-    };
-    (writer_sender, reader_receiver, io_threads)
-}
-
 pub struct IoThreads {
-    reader: thread::JoinHandle<io::Result<()>>,
-    writer: thread::JoinHandle<io::Result<()>>,
-    shutdown_signal: Arc<AtomicBool>,
+    pub reader: thread::JoinHandle<io::Result<()>>,
+    pub writer: thread::JoinHandle<io::Result<()>>,
+    pub shutdown_signal: Arc<AtomicBool>,
 }
 
 impl IoThreads {
-    pub(crate) fn new(
+    pub fn new(
         reader: thread::JoinHandle<io::Result<()>>,
         writer: thread::JoinHandle<io::Result<()>>,
         shutdown_signal: Arc<AtomicBool>,
@@ -79,7 +61,7 @@ impl IoThreads {
     }
 }
 
-fn make_reader<I: InitializeConnectionMessage>(
+pub fn make_reader<I: InitializeConnectionMessage>(
     stream: TcpStream,
     shutdown_signal: Arc<AtomicBool>,
 ) -> (Receiver<Message>, thread::JoinHandle<io::Result<()>>) {
@@ -102,7 +84,7 @@ fn make_reader<I: InitializeConnectionMessage>(
     (reader_receiver, reader)
 }
 
-fn make_writer(
+pub fn make_writer(
     mut stream: TcpStream,
     shutdown_signal: Arc<AtomicBool>,
 ) -> (Sender<Message>, thread::JoinHandle<io::Result<()>>) {

@@ -1,9 +1,9 @@
 use crossbeam_channel::{Receiver, TryRecvError};
 use seraphic::{
-    client::Client,
-    connection::{Connection, InitializeConnectionMessage},
+    client::ClientConnection,
+    connection::InitializeConnectionMessage,
     error::{Error, ErrorCode, ErrorKind},
-    server::Server,
+    server::ServerConnection,
     Message, MsgWrapper, Response, ResponseWrapper, RpcNamespace, RpcRequest, RpcResponse,
 };
 use seraphic_derive::{RequestWrapper, ResponseWrapper, RpcNamespace, RpcRequest};
@@ -52,13 +52,6 @@ struct FooResponse {}
 struct TriggersErrorRequest {}
 
 const ADDR: &str = "127.0.0.1:4569";
-
-fn client() -> Client<InitRequest> {
-    Client::<InitRequest>::from(Connection::<InitRequest>::connect(ADDR).unwrap())
-}
-fn server() -> Server<InitRequest> {
-    Server::<InitRequest>::from(Connection::<InitRequest>::listen(ADDR).unwrap())
-}
 
 fn user_input_thread() -> Receiver<Message> {
     let (sender, recv) = crossbeam_channel::bounded(0);
@@ -119,7 +112,7 @@ fn user_input_thread() -> Receiver<Message> {
     recv
 }
 
-fn client_loop(client: Client<InitRequest>) {
+fn client_loop(client: ClientConnection<InitRequest>) {
     println!("starting client loop");
     let user_input_recv = user_input_thread();
     loop {
@@ -156,12 +149,12 @@ fn client_loop(client: Client<InitRequest>) {
         }
     }
 
-    client.threads.join().unwrap();
+    client.conn.io_threads.join().unwrap();
     println!("Goodbye from client!");
 }
 
 /// Simply sends empty responses associated with received requests
-fn server_loop(server: Server<InitRequest>) {
+fn server_loop(server: ServerConnection<InitRequest>) {
     loop {
         match server.conn.receiver.try_recv() {
             Ok(msg) => {
@@ -206,13 +199,17 @@ fn server_loop(server: Server<InitRequest>) {
         }
     }
 
-    server.threads.join().unwrap();
+    server.conn.io_threads.join().unwrap();
     println!("Goodbye from server!");
 }
 
 fn main() {
     let task = std::thread::spawn(move || {
-        let server = server();
+        let server = ServerConnection::incoming(ADDR)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap();
         let init_req = server.initialize(InitResponse {}).unwrap();
         println!("server started w/ init params from client: {init_req:#?}");
 
@@ -220,7 +217,7 @@ fn main() {
     });
     sleep(Duration::from_secs(1));
 
-    let client = client();
+    let client = ClientConnection::connect(ADDR).unwrap();
     let init_res = client.initialize(InitRequest {}).unwrap().unwrap();
     println!("client started w/ init params from server: {init_res:#?}");
     client_loop(client);

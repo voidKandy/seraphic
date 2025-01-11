@@ -1,20 +1,10 @@
 pub mod connection;
-
-use crossbeam_channel::unbounded;
+use seraphic::connection::{Connection, InitializeConnectionMessage};
 use seraphic::{
-    client::Client,
     derive::{RpcNamespace, RpcRequest},
-    error::{ErrorCode, ErrorKind},
-    msg::{Request, Response},
-    server::Server,
     RpcNamespace, RpcRequest, RpcResponse,
 };
 use serde::{Deserialize, Serialize};
-use serde_json::to_value;
-
-use seraphic::msg::MessageId;
-
-use seraphic::connection::{Connection, InitializeConnectionMessage};
 
 #[derive(RpcNamespace, Clone, Copy, PartialEq, Eq)]
 pub enum TestNS {
