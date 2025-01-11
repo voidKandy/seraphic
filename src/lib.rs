@@ -52,7 +52,12 @@ pub trait RpcResponse:
 }
 
 pub trait RpcRequest:
-    std::fmt::Debug + Clone + serde::Serialize + for<'de> serde::Deserialize<'de>
+    std::fmt::Debug
+    + Clone
+    + serde::Serialize
+    + for<'de> serde::Deserialize<'de>
+    + std::marker::Send
+    + 'static
 {
     type Response: RpcResponse;
     type Namespace: RpcNamespace;

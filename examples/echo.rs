@@ -3,12 +3,17 @@ use seraphic::{
     client::ClientConnection,
     connection::InitializeConnectionMessage,
     error::{Error, ErrorCode, ErrorKind},
-    server::ServerConnection,
+    server::{Server, ServerConnection, ServerConnectionHandler},
     Message, MsgWrapper, Response, ResponseWrapper, RpcNamespace, RpcRequest, RpcResponse,
 };
 use seraphic_derive::{RequestWrapper, ResponseWrapper, RpcNamespace, RpcRequest};
 use serde::{Deserialize, Serialize};
-use std::{collections::HashMap, io::Write, thread::sleep, time::Duration};
+use std::{
+    collections::HashMap,
+    io::Write,
+    thread::{sleep, JoinHandle},
+    time::Duration,
+};
 
 type MyWrapper = MsgWrapper<ReqWrapper, ResWrapper>;
 
@@ -153,68 +158,68 @@ fn client_loop(client: ClientConnection<InitRequest>) {
     println!("Goodbye from client!");
 }
 
-/// Simply sends empty responses associated with received requests
-fn server_loop(server: ServerConnection<InitRequest>) {
-    loop {
-        match server.conn.receiver.try_recv() {
-            Ok(msg) => {
-                println!("server received: {msg:#?}");
-                let wrapper = MyWrapper::try_from(msg).expect("failed to get wrapper");
-                match wrapper {
-                    MsgWrapper::Req { id, req } => match req {
-                        ReqWrapper::Foo(_foo) => {
-                            let response = FooResponse {};
-                            server
-                                .conn
-                                .sender
-                                .send(response.into_response(id).unwrap().into())
-                                .unwrap()
+struct ServerConnHandler;
+impl ServerConnectionHandler<InitRequest> for ServerConnHandler {
+    fn handler(conn: &mut ServerConnection<InitRequest>) -> seraphic::server::ServerHandlerResult {
+        let init_req = conn.initialize(InitResponse {}).unwrap();
+        println!("server started w/ init params from client: {init_req:#?}");
+        loop {
+            match conn.conn.receiver.try_recv() {
+                Ok(msg) => {
+                    println!("server received: {msg:#?}");
+                    let wrapper = MyWrapper::try_from(msg).expect("failed to get wrapper");
+                    match wrapper {
+                        MsgWrapper::Req { id, req } => match req {
+                            ReqWrapper::Foo(_foo) => {
+                                let response = FooResponse {};
+                                conn.conn
+                                    .sender
+                                    .send(response.into_response(id).unwrap().into())
+                                    .unwrap()
+                            }
+                            ReqWrapper::TriggerErr(_foo_err) => {
+                                let error: Error = ErrorKind::other(
+                                    "received req that triggers err, returning error response",
+                                    ErrorCode::InternalError,
+                                )
+                                .into();
+                                let response = Response::from_error(id, error);
+                                conn.conn.sender.send(response.into()).unwrap()
+                            }
+                        },
+                        MsgWrapper::Res { .. } => {}
+                        MsgWrapper::Shutdown(_) => {
+                            assert!(conn.conn.handle_shutdown(&wrapper.into()).unwrap());
+                            break;
                         }
-                        ReqWrapper::TriggerErr(_foo_err) => {
-                            let error: Error = ErrorKind::other(
-                                "received req that triggers err, returning error response",
-                                ErrorCode::InternalError,
-                            )
-                            .into();
-                            let response = Response::from_error(id, error);
-                            server.conn.sender.send(response.into()).unwrap()
+                        MsgWrapper::Err { .. } => {}
+                        MsgWrapper::Exit => {
+                            unreachable!("receiving this should be handled in handle_shutdown");
                         }
-                    },
-                    MsgWrapper::Res { .. } => {}
-                    MsgWrapper::Shutdown(_) => {
-                        assert!(server.conn.handle_shutdown(&wrapper.into()).unwrap());
-                        break;
-                    }
-                    MsgWrapper::Err { .. } => {}
-                    MsgWrapper::Exit => {
-                        unreachable!("receiving this should be handled in handle_shutdown");
                     }
                 }
-            }
-            Err(TryRecvError::Empty) => {}
-            Err(TryRecvError::Disconnected) => {
-                println!("disconnected");
-                break;
+                Err(TryRecvError::Empty) => {}
+                Err(TryRecvError::Disconnected) => {
+                    println!("disconnected");
+                    break;
+                }
             }
         }
-    }
 
-    server.conn.io_threads.join().unwrap();
-    println!("Goodbye from server!");
+        println!("Goodbye from server!");
+        Ok(())
+    }
 }
 
 fn main() {
-    let task = std::thread::spawn(move || {
-        let server = ServerConnection::incoming(ADDR)
-            .unwrap()
-            .next()
-            .unwrap()
-            .unwrap();
-        let init_req = server.initialize(InitResponse {}).unwrap();
-        println!("server started w/ init params from client: {init_req:#?}");
-
-        server_loop(server);
-    });
+    let task: JoinHandle<Result<Server<InitRequest, ServerConnHandler>, &'static str>> =
+        std::thread::spawn(move || {
+            let mut server = Server::<InitRequest, ServerConnHandler>::listen(ADDR).unwrap();
+            let (connection, conn_shutdown) = server.next().unwrap().unwrap();
+            server.spawn_connection_thread(connection, conn_shutdown);
+            // server.shutdown_and_join_all_connections().unwrap();
+            Ok(server)
+        });
     sleep(Duration::from_secs(1));
 
     let client = ClientConnection::connect(ADDR).unwrap();
@@ -222,5 +227,9 @@ fn main() {
     println!("client started w/ init params from server: {init_res:#?}");
     client_loop(client);
 
-    assert!(task.is_finished())
+    let mut server = task.join().unwrap().unwrap();
+    tracing::warn!("got server from thread");
+
+    server.shutdown_and_join_all_connections().unwrap();
+    server.shutdown();
 }

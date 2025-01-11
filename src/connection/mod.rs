@@ -1,16 +1,13 @@
-mod io;
+pub mod endpoint;
+pub mod io;
 use crate::{
     error::{Error, ErrorCode, ErrorKind},
     msg::{Message, Request, Response},
     RpcRequest, RpcResponse,
 };
 use crossbeam_channel::{Receiver, RecvTimeoutError, Sender};
-use io::{make_reader, make_writer, IoThreads};
-use std::{
-    marker::PhantomData,
-    net::TcpStream,
-    sync::{atomic::AtomicBool, Arc},
-};
+use io::IoThreads;
+use std::marker::PhantomData;
 
 /// Connection is just a pair of channels of LSP messages.
 /// Generic I is an RpcRequest for the initial request
@@ -61,24 +58,6 @@ impl<I> Connection<I>
 where
     I: InitializeConnectionMessage,
 {
-    pub(crate) fn socket_transport(stream: TcpStream) -> Self {
-        let shutdown = Arc::new(AtomicBool::new(false));
-        let (reader_receiver, reader) =
-            make_reader::<I>(stream.try_clone().unwrap(), Arc::clone(&shutdown));
-        let (writer_sender, writer) = make_writer(stream, Arc::clone(&shutdown));
-        let io_threads = IoThreads {
-            reader,
-            writer,
-            shutdown_signal: shutdown,
-        };
-        Self {
-            sender: writer_sender,
-            receiver: reader_receiver,
-            io_threads,
-            init_request_marker: PhantomData,
-        }
-    }
-
     /// If `message` is not `Shutdown` returns false`
     /// Message::Shutdown(false): responds with Message::Shutdown(true) waits for an expected Message::Exit
     /// Message::Shutdown(true): responds with Message::Exit and returns

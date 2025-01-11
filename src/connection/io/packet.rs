@@ -61,7 +61,7 @@ where
         let mut header = [0u8; header_size()];
         let mut buffer = [0u8; 1024].to_vec();
         let mut size = None;
-        loop {
+        while size.is_none() {
             match inp.read_exact(&mut header) {
                 Ok(_) => {
                     if header.is_empty() {
@@ -69,32 +69,46 @@ where
                     }
                     let payload_size = u32::from_le_bytes(header) as usize;
                     size = Some(payload_size);
-                    break;
                 }
                 Err(err)
                     if err.kind() == ErrorKind::UnexpectedEof && header == [0u8; header_size()] =>
                 {
-                    tracing::debug!("read received empty, channel must have closed");
+                    return Ok(None);
+                }
+                Err(err) if err.kind() == ErrorKind::WouldBlock => {
                     return Ok(None);
                 }
                 Err(err) => {
                     return Err(std::io::Error::other(format!(
-                        "unexepect error when reading: {err:#?}\nbuffer: {}",
+                        "unexepect error when reading header: {err:#?}\nbuffer: {}",
                         String::from_utf8_lossy(&buffer)
                     )));
                 }
             }
         }
         let size: usize = size.ok_or(std::io::Error::other("no content length"))?;
+        tracing::debug!("got payload size from header: {size}");
         buffer.resize(size, 0);
-        inp.read_exact(&mut buffer)?;
-        let typ = serde_json::from_slice::<T>(&buffer).map_err(|err| {
-            std::io::Error::other(format!(
-                "malformed payload: {}\nErr: {err:#?}",
-                String::from_utf8_lossy(&buffer),
-            ))
-        })?;
-        Ok(Some(typ))
+        match inp.read_exact(&mut buffer) {
+            Ok(_) => {
+                let typ = serde_json::from_slice::<T>(&buffer).map_err(|err| {
+                    std::io::Error::other(format!(
+                        "malformed payload: {}\nErr: {err:#?}",
+                        String::from_utf8_lossy(&buffer),
+                    ))
+                })?;
+                Ok(Some(typ))
+            }
+            Err(err) if err.kind() == ErrorKind::WouldBlock => {
+                return Ok(None);
+            }
+            Err(err) => {
+                return Err(std::io::Error::other(format!(
+                    "unexepect error when reading payload: {err:#?}\nbuffer: {}",
+                    String::from_utf8_lossy(&buffer)
+                )));
+            }
+        }
     }
 
     pub fn write(out: &mut dyn Write, typ: &T) -> std::io::Result<()> {
