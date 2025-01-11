@@ -217,7 +217,6 @@ fn main() {
             let mut server = Server::<InitRequest, ServerConnHandler>::listen(ADDR).unwrap();
             let (connection, conn_shutdown) = server.next().unwrap().unwrap();
             server.spawn_connection_thread(connection, conn_shutdown);
-            // server.shutdown_and_join_all_connections().unwrap();
             Ok(server)
         });
     sleep(Duration::from_secs(1));
