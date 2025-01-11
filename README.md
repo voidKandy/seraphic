@@ -20,7 +20,7 @@
 </div>
 
 
-A super light JSON RPC 2.0 implementation.
+A synchronous, lightweight crate for creating your own JSON RPC 2.0 protocol.
 
 > **_WARNING_**:
 This is very early in development and is subject to significant change.
@@ -122,27 +122,59 @@ type MyConnection = Connection<InitRequest>;
 > 
 > While the `rpc_request` proc macro requires that you pass a `namespace` argument, the initial request and response structs *do not* need to be included in your wrappers if they are *only* used for connection initialization. The `RpcRequest` restraint on the initial request will most likely change to it's own trait down the line.
 
-## Client/Server
-The `Server<I>` and `Client<I>` structs implement `From<Connection<I>>`, so creating them is as easy as:
+
+## `Server<I, H>` & `ServerConnection<I>`
+Before you can spin up a server, you need to implement `ServerConnectionHandler` on some struct.
+### `ServerConnectionHandler`
+This trait simply defines *what* your server connections will do once they are instantiated. 
 ```rust
-let serv_conn = Connection::<InitRequest>::listen("127.0.0.1:3000")?;
-let server = Server::<InitRequest>::from(conn);
-
-let client_conn = Connection::<InitRequest>::connect("127.0.0.1:3000")?;
-let client = Client::<InitRequest>::from(conn);
+pub trait ServerConnectionHandler<I>
+where
+    I: InitializeConnectionMessage,
+    Self: 'static,
+{
+    fn handler(conn: &mut ServerConnection<I>) -> ServerHandlerResult;
+}
 ```
-Once both structs are instantiated, a connection should be initialized using your initial request struct (`InitRequest` in this example)
+The only requirement is that you initialize the connection before you do any other work, for example:
 ```rust
-// this will hang until the server receives an `InitRequest` from the client, it will then send it's response and return the request it received
-let init_req = server.initialize(InitResponse {})?;
-
-// Does the inverse of what Server::<I>::initilialize does
-let init_res = client.initialize(InitRequest {})?;
+struct ServerConnHandler;
+impl ServerConnectionHandler<InitRequest> for ServerConnHandler {
+    fn handler(conn: &mut ServerConnection<InitRequest>) -> seraphic::server::ServerHandlerResult {
+        let init_req = conn.initialize(InitResponse {}).unwrap();
+        loop {
+            match conn.conn.receiver.try_recv() {
+                Ok(msg) => {
+                    let wrapper = MyWrapper::try_from(msg).expect("failed to get wrapper");
+                    ...
+                },
+              ...
+            }
+        }
+    }
+}
 ```
-Once the connection has been initialized you can have each your client and server enter a loop and do whatever they need to.
-> **Note**
-> Make sure to call `join` on both `server.threads` and `client.threads` after you define your loop logic. 
+Actually spinning up a server is very similar to creating a `TcpStream`:
+```rust
+let mut server = Server::<InitRequest, ServerConnHandler>::listen(ADDR).unwrap();
+```
+Much like how you can handle incoming connections with `TcpListener::incoming`, you can handle incoming connections to your server using `next()`
+```rust
+let (conn, shutdown_signal): (ServerConnection<InitRequest>, Arc<AtomicBool>) = server.next().unwrap();
+// in order to get your connection working with your handler, pass these to the `spawn_connection_thread` method
+server.spawn_connection_thread(conn, shutdown_signal);
+```
 
-Referring to the [Echo Example](https://github.com/voidKandy/seraphic/tree/refactor/examples) might be helpful
+## `ClientConnection<I>`
+If you are familiar with working with `TcpStream` in Rust, this should feel somewhat similar.
+`ClientConnection<I>` is quite easy to spin up using the `connect` method. 
+This assumes there is a `Server` listening on the given address.
+```rust
+let client = ClientConnection::connect("127.0.0.1:3000");
+// make sure to initialize the connection
+let init_response = client.initialize(InitRequest {})?;
+```
+
+Referring to the [Echo Example](https://github.com/voidKandy/seraphic/examples) might be helpful
 
 
