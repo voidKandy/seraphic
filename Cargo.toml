@@ -2,7 +2,7 @@
 name = "seraphic"
 license = "MIT OR Apache-2.0"
 authors = [ "Void Kandy" ]
-version = "0.1.4"
+version = "0.1.41"
 description = "Lightweight JSON RPC 2.0"
 homepage="https://github.com/voidKandy/seraphic"
 repository="https://github.com/voidKandy/seraphic"
