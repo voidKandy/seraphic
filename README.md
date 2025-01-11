@@ -175,6 +175,6 @@ let client = ClientConnection::connect("127.0.0.1:3000");
 let init_response = client.initialize(InitRequest {})?;
 ```
 
-Referring to the [Echo Example](https://github.com/voidKandy/seraphic/examples) might be helpful
+Referring to the [Echo Example](https://github.com/voidKandy/seraphic/tree/dev/examples) might be helpful
 
 
