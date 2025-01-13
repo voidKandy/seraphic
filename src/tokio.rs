@@ -6,7 +6,7 @@ impl<T> TcpPacket<T>
 where
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + std::fmt::Debug,
 {
-    pub async fn async_read<R>(inp: &mut tokio::io::BufReader<R>) -> std::io::Result<Option<T>>
+    pub async fn async_read<R>(inp: &mut R) -> std::io::Result<Option<T>>
     where
         R: AsyncRead + std::marker::Unpin,
     {
