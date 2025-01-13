@@ -1,71 +1,82 @@
-use serde::{Deserialize, Serialize};
-
-use crate::{MainErr, RpcRequest, RpcResponse, JSONRPC_FIELD};
-
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
-#[serde(untagged)]
-pub enum Message {
-    Req(Request),
-    Res(Response),
-    /// bool is an ack flag
-    /// + true: Sender received a Shutdown(false)
-    /// + false: Sender initialized shutdown
-    Shutdown(bool),
-    /// Notification of the sender exiting the network
-    Exit,
-}
+use crate::{
+    Error as RpcError, RequestWrapper, ResponseWrapper, RpcRequest, RpcResponse, JSONRPC_FIELD,
+};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use serde_json::Value;
 
 pub type MessageId = String;
+#[derive(Debug, Clone, PartialEq)]
+pub enum Message<Rq, Rs> {
+    Req { id: MessageId, req: Rq },
+    Res { id: MessageId, res: Rs },
+    Err { id: MessageId, err: RpcError },
+}
 
-impl Message {
-    const SHUTDOWN: &'static str = "shutdown";
-    const EXIT: &'static str = "exit";
-    pub fn id(&self) -> &str {
+impl<'de, Rq, Rs> Deserialize<'de> for Message<Rq, Rs>
+where
+    Rq: RequestWrapper,
+    Rs: ResponseWrapper,
+{
+    fn deserialize<D>(d: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let json = <Value as Deserialize>::deserialize(d)?;
+
+        // request deserialization MUST come first, Response can result in a false positive
+        if let Ok(req) = serde_json::from_value::<Request>(json.clone()) {
+            let id = req.id.clone();
+
+            let req = Rq::try_from_req(req).map_err(|err| {
+                serde::de::Error::custom(format!(
+                    "Err converting from deserialized Request to wrapper: {err:#?}",
+                ))
+            })?;
+
+            return Ok(Self::Req { id, req });
+        }
+
+        if let Ok(res) = serde_json::from_value::<Response>(json) {
+            let id = res.id.clone();
+            match Rs::try_from_res(res).map_err(|err| {
+                serde::de::Error::custom(format!(
+                    "Err converting from deserialized Response to wrapper: {err:#?}",
+                ))
+            })? {
+                Ok(res) => return Ok(Self::Res { id, res }),
+                Err(err) => return Ok(Self::Err { id, err }),
+            }
+        }
+
+        Err(serde::de::Error::custom(
+            "Failed to deserialize any Message variant",
+        ))
+    }
+}
+
+impl<Rq, Rs> Serialize for Message<Rq, Rs>
+where
+    Rq: RequestWrapper,
+    Rs: ResponseWrapper,
+{
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
         match self {
-            Self::Req(r) => &r.id,
-            Self::Res(r) => &r.id,
-            Self::Shutdown(_) => Self::SHUTDOWN,
-            Self::Exit => Self::EXIT,
+            Self::Req { id, req } => {
+                let req: Request = req.into_req(id);
+                req.serialize(serializer)
+            }
+            Self::Res { id, res } => {
+                let res: Response = res.into_res(id);
+                res.serialize(serializer)
+            }
+            Self::Err { id, err } => {
+                let err_res = Response::from_error(id, err.clone());
+                err_res.serialize(serializer)
+            }
         }
-    }
-
-    pub fn to_send(&self) -> (MessageId, Option<serde_json::Value>) {
-        let json = match self {
-            Self::Req(r) => Some(serde_json::to_value(r).expect("failed to serialize request")),
-            Self::Res(r) => Some(serde_json::to_value(r).expect("failed to serialize request")),
-            _ => None,
-        };
-        (self.id().to_string(), json)
-    }
-}
-
-impl TryInto<Request> for Message {
-    type Error = MainErr;
-    fn try_into(self) -> Result<Request, Self::Error> {
-        if let Self::Req(r) = self {
-            return Ok(r);
-        }
-        Err(std::io::Error::other("incorrect variant").into())
-    }
-}
-impl TryInto<Response> for Message {
-    type Error = MainErr;
-    fn try_into(self) -> Result<Response, Self::Error> {
-        if let Self::Res(r) = self {
-            return Ok(r);
-        }
-        Err(std::io::Error::other("incorrect variant").into())
-    }
-}
-
-impl From<Request> for Message {
-    fn from(value: Request) -> Self {
-        Self::Req(value)
-    }
-}
-impl From<Response> for Message {
-    fn from(value: Response) -> Self {
-        Self::Res(value)
     }
 }
 
@@ -108,15 +119,6 @@ impl Request {
 }
 
 impl Response {
-    pub fn new_ok(id: impl ToString, result: Option<serde_json::Value>) -> Self {
-        Self {
-            jsonrpc: JSONRPC_FIELD.to_string(),
-            result,
-            error: None,
-            id: id.to_string(),
-        }
-    }
-
     pub fn from_error(id: impl ToString, error: crate::error::Error) -> Self {
         Self {
             jsonrpc: JSONRPC_FIELD.to_string(),

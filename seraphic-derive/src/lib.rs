@@ -1,9 +1,161 @@
 use core::panic;
+use std::str::FromStr;
 
 use darling::FromDeriveInput;
 use proc_macro::{self, TokenStream};
-use quote::{format_ident, quote};
-use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, TypePath};
+use proc_macro2::Span;
+use quote::{format_ident, quote, ToTokens};
+use syn::{
+    braced, bracketed, parse::Parse, parse_macro_input, punctuated::Punctuated, Data, DataEnum,
+    DataStruct, DeriveInput, Ident, Path, Token, TypePath,
+};
+
+struct WrapperInput {
+    trait_name: WrapperTrait,
+    enum_name: Ident,
+    types: Punctuated<Path, Token![,]>,
+}
+
+impl TryFrom<Path> for WrapperTrait {
+    type Error = syn::Error;
+    fn try_from(value: Path) -> Result<Self, Self::Error> {
+        let response_id = format_ident!("ResponseWrapper");
+        let request_id = format_ident!("RequestWrapper");
+        let last_segment_id = &value.segments.last().unwrap().ident;
+
+        if *last_segment_id == response_id {
+            Ok(Self::Response(value))
+        } else if *last_segment_id == request_id {
+            Ok(Self::Request(value))
+        } else {
+            Err(syn::Error::new(
+                Span::call_site(),
+                format!("{last_segment_id:#?} is not a valid trait"),
+            ))
+        }
+    }
+}
+
+enum WrapperTrait {
+    Request(Path),
+    Response(Path),
+}
+
+impl syn::parse::Parse for WrapperInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let trait_name = WrapperTrait::try_from(Path::parse(input)?)?;
+        let _comma: Token![,] = input.parse()?;
+        let enum_name: Ident = input.parse()?;
+        let _comma: Token![,] = input.parse()?;
+        let content;
+        bracketed!(content in input);
+        let types = content.parse_terminated(Path::parse, Token![,])?;
+        Ok(WrapperInput {
+            trait_name,
+            enum_name,
+            types,
+        })
+    }
+}
+
+#[proc_macro]
+pub fn wrapper(input: TokenStream) -> TokenStream {
+    let WrapperInput {
+        enum_name,
+        types,
+        trait_name,
+    } = parse_macro_input!(input as WrapperInput);
+
+    let mut variants_body = quote! {};
+    let mut from_impls = quote! {};
+    let mut trait_into_body = quote! {};
+    let trait_into_fn = match trait_name {
+        WrapperTrait::Request(_) => {
+            quote! {
+                fn into_req(&self, id: impl ToString) -> seraphic::Request
+            }
+        }
+        WrapperTrait::Response(_) => {
+            quote! {
+                fn into_res(&self, id: impl ToString) -> seraphic::Response
+            }
+        }
+    };
+
+    let mut trait_from_body = quote! {};
+    let trait_from_fn = match trait_name {
+        WrapperTrait::Request(_) => {
+            quote! {
+                fn try_from_req(req: seraphic::Request) -> Result<Self, Box<dyn std::error::Error + Send + Sync + 'static>>
+            }
+        }
+        WrapperTrait::Response(_) => {
+            quote! {
+                fn try_from_res(res: seraphic::Response) -> Result<Result<serde_::Response, seraphic::error::Error>, Box<(dyn StdError + Send + Sync + 'static)>>
+            }
+        }
+    };
+
+    types.iter().for_each(|ty| {
+        // let mut into_body = quote! {};
+        // let mut from_body = quote! {};
+        let last_segment_id = &ty.segments.last().unwrap().ident;
+        let variant_ident = format_ident!(
+            "{}{}",
+            last_segment_id.to_string().chars().next().unwrap(),
+            last_segment_id
+                .to_string()
+                .chars()
+                .skip(1)
+                .take_while(|c| c.is_lowercase())
+                .collect::<String>()
+        );
+
+        let to_be_added = proc_macro2::TokenStream::from_str(&format!(
+            "{}({})",
+            variant_ident.to_string(),
+            ty.to_token_stream().to_string()
+        ))
+        .unwrap();
+
+        variants_body = quote! {
+            #variants_body
+            #to_be_added
+        };
+
+        let from_impl = quote! {
+            impl From<#ty> for #enum_name {
+                fn from(v: #ty) -> Self {
+                    Self::#variant_ident(v)
+                }
+            }
+        };
+
+        from_impls = quote! {
+            #from_impls
+            #from_impl
+        };
+    });
+
+    let trait_path = match trait_name {
+        WrapperTrait::Response(p) => p,
+        WrapperTrait::Request(p) => p,
+    };
+
+    // Generate the enum definition
+    let expanded = quote! {
+        #[derive(Debug, Clone, #trait_path, PartialEq)]
+        pub enum #enum_name {
+            #variants_body
+        }
+
+        #from_impls
+
+
+    };
+
+    expanded.into()
+}
 
 // https://github.com/imbolc/rust-derive-macro-guide
 #[derive(FromDeriveInput, Default)]
@@ -154,7 +306,7 @@ pub fn derive_req_wrapper(input: TokenStream) -> TokenStream {
             }
 
             let into_req = quote! {
-                fn into_req(self, id: impl ToString) -> seraphic::Request {
+                fn into_req(&self, id: impl ToString) -> seraphic::Request {
                     match self {
                         #into_req_body
                     }
@@ -220,7 +372,7 @@ pub fn derive_res_wrapper(input: TokenStream) -> TokenStream {
             }
 
             let into_res = quote! {
-                fn into_res(self, id: impl ToString) -> seraphic::Response {
+                fn into_res(&self, id: impl ToString) -> seraphic::Response {
                     match self {
                         #into_res_body
                     }

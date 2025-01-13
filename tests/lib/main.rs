@@ -1,8 +1,10 @@
-pub mod connection;
-use seraphic::connection::{Connection, InitializeConnectionMessage};
+pub mod async_io;
+pub mod serde_;
+pub mod sync_io;
 use seraphic::{
-    derive::{RpcNamespace, RpcRequest},
-    RpcNamespace, RpcRequest, RpcResponse,
+    derive::{RequestWrapper, ResponseWrapper, RpcNamespace, RpcRequest},
+    packet::TcpPacket,
+    ResponseWrapper, RpcNamespace, RpcRequest, RpcResponse,
 };
 use serde::{Deserialize, Serialize};
 
@@ -11,15 +13,15 @@ pub enum TestNS {
     Test,
 }
 
-pub type TestConnection = Connection<TestInitRequest>;
-
-#[derive(RpcRequest, Clone, Deserialize, Serialize, Debug)]
+#[derive(RpcRequest, Clone, Deserialize, Serialize, Debug, PartialEq)]
 #[rpc_request(namespace = "TestNS:test")]
-pub struct TestInitRequest {}
+pub struct TestRequest {}
 
-impl InitializeConnectionMessage for TestInitRequest {
-    const ID: &str = "test_init";
-}
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TestResponse {}
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct TestInitResponse {}
+seraphic_derive::wrapper!(ResponseWrapper, MyResponse, [TestResponse]);
+seraphic_derive::wrapper!(RequestWrapper, MyRequest, [TestRequest]);
+
+pub type Message = seraphic::Message<MyRequest, MyResponse>;
+pub type MessagePacket = TcpPacket<Message>;

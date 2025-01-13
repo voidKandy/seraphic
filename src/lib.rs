@@ -1,18 +1,19 @@
-#[cfg(feature = "client")]
-pub mod client;
-/// a good amount of this module has been ripped directly from [`lsp_server`](https://docs.rs/lsp-server/latest/src/lsp_server/stdio.rs.html)
-/// ^^ Many thanks to these guys ^^
-pub mod connection;
 pub mod error;
 pub mod msg;
-#[cfg(feature = "server")]
-pub mod server;
+pub mod packet;
+#[cfg(feature = "tokio")]
+pub mod tokio;
+
+use std::any::TypeId;
+
 use error::Error;
 pub use msg::{Message, MessageId, Request, Response};
 pub use seraphic_derive as derive;
+use serde_json::Value;
 
 type MainErr = Box<dyn std::error::Error + Send + Sync + 'static>;
 type MainResult<T> = std::result::Result<T, MainErr>;
+
 pub const JSONRPC_FIELD: &str = "2.0";
 pub trait RpcNamespace: PartialEq + Copy {
     const SEPARATOR: &str;
@@ -23,7 +24,7 @@ pub trait RpcNamespace: PartialEq + Copy {
 }
 
 pub trait RpcResponse:
-    std::fmt::Debug + Clone + serde::Serialize + for<'de> serde::Deserialize<'de>
+    std::fmt::Debug + Clone + serde::Serialize + for<'de> serde::Deserialize<'de> + PartialEq
 {
     fn try_from_response(res: &Response) -> MainResult<Result<Self, Error>> {
         if let Some(e) = &res.error {
@@ -58,11 +59,13 @@ pub trait RpcRequest:
     + for<'de> serde::Deserialize<'de>
     + std::marker::Send
     + 'static
+    + PartialEq
 {
     type Response: RpcResponse;
     type Namespace: RpcNamespace;
     fn method() -> &'static str;
     fn namespace() -> Self::Namespace;
+
     /// Only fails if self fails to serialize
     fn into_request(&self, id: impl ToString) -> MainResult<Request> {
         let params = serde_json::to_value(&self)?;
@@ -91,87 +94,18 @@ pub trait RpcRequest:
         Self: Sized;
 }
 
-pub enum MsgWrapper<Req, Res> {
-    Req { id: MessageId, req: Req },
-    Res { id: MessageId, res: Res },
-    Err { id: MessageId, err: Error },
-    Shutdown(bool),
-    Exit,
-}
-
-impl<Req, Res> Into<msg::Message> for MsgWrapper<Req, Res>
-where
-    Req: RequestWrapper,
-    Res: ResponseWrapper,
-{
-    fn into(self) -> msg::Message {
-        match self {
-            Self::Req { id, req } => Message::Req(req.into_req(id)),
-            Self::Res { id, res } => Message::Res(res.into_res(id)),
-            Self::Err { id, err } => Message::Res(Response {
-                jsonrpc: JSONRPC_FIELD.to_string(),
-                result: None,
-                error: Some(err),
-                id,
-            }),
-            Self::Exit => Message::Exit,
-            Self::Shutdown(b) => Message::Shutdown(b),
+pub trait ResponseWrapper: std::fmt::Debug + PartialEq {
+    fn into_message<Rq>(self, id: impl ToString) -> Message<Rq, Self>
+    where
+        Rq: RequestWrapper,
+        Self: Sized,
+    {
+        Message::Res {
+            id: id.to_string(),
+            res: self,
         }
     }
-}
-
-impl<Req, Res> TryFrom<msg::Message> for MsgWrapper<Req, Res>
-where
-    Req: RequestWrapper,
-    Res: ResponseWrapper,
-{
-    type Error = MainErr;
-    fn try_from(value: msg::Message) -> Result<Self, Self::Error> {
-        match value {
-            msg::Message::Req(req) => Ok(Self::Req {
-                id: req.id.clone(),
-                req: Req::try_from_req(req)?,
-            }),
-            msg::Message::Res(res) => {
-                let id = res.id.clone();
-                match Res::try_from_res(res)? {
-                    Ok(res) => Ok(Self::Res { id, res }),
-                    Err(err) => Ok(Self::Err { id, err }),
-                }
-            }
-            msg::Message::Shutdown(b) => Ok(Self::Shutdown(b)),
-            msg::Message::Exit => Ok(Self::Exit),
-        }
-    }
-}
-
-impl<Req, Res> MsgWrapper<Req, Res>
-where
-    Req: RequestWrapper,
-    Res: ResponseWrapper,
-{
-    pub fn id(&self) -> Option<&MessageId> {
-        match self {
-            Self::Req { id, .. } | Self::Res { id, .. } => Some(id),
-            _ => None,
-        }
-    }
-    pub fn as_req(&self) -> Option<(&MessageId, &Req)> {
-        match self {
-            Self::Req { id, req } => Some((id, req)),
-            _ => None,
-        }
-    }
-    pub fn as_res(&self) -> Option<(&MessageId, &Res)> {
-        match self {
-            Self::Res { id, res } => Some((id, res)),
-            _ => None,
-        }
-    }
-}
-
-pub trait ResponseWrapper: std::fmt::Debug {
-    fn into_res(self, id: impl ToString) -> Response
+    fn into_res(&self, id: impl ToString) -> Response
     where
         Self: Sized;
     fn try_from_res(res: Response) -> MainResult<Result<Self, Error>>
@@ -179,8 +113,19 @@ pub trait ResponseWrapper: std::fmt::Debug {
         Self: Sized;
 }
 
-pub trait RequestWrapper: std::fmt::Debug {
-    fn into_req(self, id: impl ToString) -> Request
+pub trait RequestWrapper: std::fmt::Debug + PartialEq {
+    fn into_message<Rs>(self, id: impl ToString) -> Message<Self, Rs>
+    where
+        Rs: ResponseWrapper,
+        Self: Sized,
+    {
+        Message::Req {
+            id: id.to_string(),
+            req: self,
+        }
+    }
+
+    fn into_req(&self, id: impl ToString) -> Request
     where
         Self: Sized;
     fn try_from_req(req: Request) -> MainResult<Self>

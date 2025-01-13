@@ -1,24 +1,53 @@
-use crate::msg::Message;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::{
     io::{BufRead, ErrorKind, Write},
     marker::PhantomData,
 };
 
+use crate::MainResult;
+
+#[derive(Clone, Debug)]
 pub struct TcpPacket<T> {
-    buffer: Vec<u8>,
+    pub(crate) buffer: Vec<u8>,
     marker: PhantomData<T>,
 }
 
-pub type MessagePacket = TcpPacket<Message>;
+impl<T> PartialEq for TcpPacket<T> {
+    fn eq(&self, other: &Self) -> bool {
+        self.buffer.eq(&other.buffer)
+    }
+}
+
 type HeaderSize = u32;
-const fn header_size() -> usize {
+pub(crate) const fn header_size() -> usize {
     std::mem::size_of::<HeaderSize>() / std::mem::size_of::<u8>()
+}
+
+impl<T> TcpPacket<T> {
+    pub fn buffer(&self) -> &[u8] {
+        &self.buffer
+    }
+}
+
+impl<T> TcpPacket<T>
+where
+    T: Serialize + std::fmt::Debug + for<'de> Deserialize<'de>,
+{
+    pub fn try_into_inner(self) -> MainResult<T> {
+        let buf = &self.buffer[header_size()..];
+        let str = String::from_utf8_lossy(buf);
+        serde_json::from_slice::<T>(buf).map_err(|err| {
+            std::io::Error::other(format!(
+                "error getting tcp packet inner from slice: {err:#?}\nbuffer: {str}"
+            ))
+            .into()
+        })
+    }
 }
 
 impl<T> From<&T> for TcpPacket<T>
 where
-    T: Serialize + std::fmt::Debug,
+    T: Serialize + std::fmt::Debug + for<'de> Deserialize<'de>,
 {
     fn from(r: &T) -> Self {
         let vec = serde_json::to_vec(r).expect("T will not work");
@@ -53,9 +82,18 @@ impl<'de, T> serde::Deserialize<'de> for TcpPacket<T> {
     }
 }
 
+impl<T> Serialize for TcpPacket<T> {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        self.buffer.serialize(serializer)
+    }
+}
+
 impl<T> TcpPacket<T>
 where
-    T: serde::Serialize + for<'de> Deserialize<'de> + std::fmt::Debug,
+    T: Serialize + std::fmt::Debug + for<'de> Deserialize<'de>,
 {
     pub fn read(inp: &mut dyn BufRead) -> std::io::Result<Option<T>> {
         let mut header = [0u8; header_size()];

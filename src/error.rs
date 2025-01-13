@@ -1,7 +1,6 @@
+use crate::{Message, RequestWrapper, ResponseWrapper};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-
-use crate::msg::Message;
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct Error {
@@ -64,7 +63,11 @@ impl<'e> ErrorKind<'e> {
         Self::Other { str, code }
     }
 
-    pub fn uninitialized(msg: &'e Message) -> Self {
+    pub fn uninitialized<Rq, Rs>(msg: &'e Message<Rq, Rs>) -> Self
+    where
+        Rq: RequestWrapper,
+        Rs: ResponseWrapper,
+    {
         let payload = serde_json::to_value(msg)
             .unwrap_or_else(|e| json!(format!("malformed payload: {e:#?}")));
         Self::Uninitialized(payload)
