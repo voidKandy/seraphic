@@ -26,7 +26,36 @@ A synchronous, lightweight crate for creating your own JSON RPC 2.0 protocol.
 This is very early in development and is subject to significant change.
 
 ## What is `seraphic`?
-`seraphic` provides a straightforward way of defining your very own JSON RPC 2.0 based protocol, including an easy way to spin up clients and servers.
+`seraphic` provides a straightforward way of defining your very own JSON RPC 2.0 based protocol messages using Rust macros.
+
+## A quick refresher on JSON RPC
+Json rpc messages are structured as follows: 
+```rust
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Request {
+    pub jsonrpc: String,
+    pub method: String,
+    pub params: serde_json::Value,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Response {
+    pub jsonrpc: String,
+    pub result: Option<serde_json::Value>,
+    pub error: Option<Error>,
+    pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct Error {
+    pub code: ErrorCode,
+    pub message: String,
+    pub data: Option<serde_json::Value>,
+}
+```
+Manually creating these structs as JSON is easy enough, but organizing all the methods, requests and responses can quickly get hectic. `seraphic` offers a quick an easy way to define all of these!
+
 
 ## Getting started
 #### `RpcNamespace` 
@@ -85,96 +114,21 @@ Each `RpcRequest` should have a corresponding `RpcResponse` struct. This can be 
 + If a `response` argument *is* passed in the `rpc_request` macros, the macro assumes the struct already implements `RpcResponse`, if not, the proc macros assumes the corresponding *Response* struct *does not* implement `RpcResponse` and will implement it for you.
 
 #### `RequestWrapper` and `ResponseWrapper` 
-> simply enums that include all of the `RpcRequest` and `RpcResponse` structs included inyour protocol
-```rust
-#[derive(RequestWrapper, Debug)]
-enum ReqWrapper {
-    Foo(SomeFooRequest),
-}
-#[derive(ResponseWrapper, Debug)]
-enum ResWrapper {
-    Foo(SomeFooResponse),
-}
+> simply enums that include all of the `RpcRequest` and `RpcResponse` structs included in your protocol.
+
+You *do not* need to manually define these enums. Instead you can use the `wrapper` macro, which has the following syntax:
 ```
+wrapper!(<ResponseWrapper|RequestWrapper>, <Name of your enum>, [<Each variant type of your enum>])
+```
+```rust
+seraphic_derive::wrapper!(ResponseWrapper, MyResponse, [SomeFooResponse]);
+seraphic_derive::wrapper!(RequestWrapper, MyRequest, [SomeFooRequest]);
+```
+
 These structs need only to implement `Debug`
-#### `MsgWrapper<Rq,Rs>` 
-> This is simply defined as a wrapper around both of your `RequestWrapper`/`ResponseWrapper`.
-```rust
-type MyWrapper = MsgWrapper<ReqWrapper, ResWrapper>;
-```
-#### `Connection<I>`
-> The backbone of `Server` and `Client`
+#### `Message<Rq,Rs>` 
+> The main type you will interact with for passing your messages.`Rq` is a `RequestWrapper` type and `Rs` is a `ResponseWrapper` type.
 
-`I` is a type that implements `RpcRequest`, it defines the *request* and *response* that are exchanged by `Client` and `Server` when they first connect
-```rust
-#[derive(RpcRequest, Clone, Deserialize, Serialize, Debug)]
-#[rpc_request(namespace = "MyNamespace:foo")]
-struct InitRequest {}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct InitResponse {}
-impl InitializeConnectionMessage for InitRequest {
-    const ID: &str = "initialize";
-}
-
-type MyConnection = Connection<InitRequest>;
-```
-> **NOTE:**
-> 
-> While the `rpc_request` proc macro requires that you pass a `namespace` argument, the initial request and response structs *do not* need to be included in your wrappers if they are *only* used for connection initialization. The `RpcRequest` restraint on the initial request will most likely change to it's own trait down the line.
-
-
-## `Server<I, H>` & `ServerConnection<I>`
-Before you can spin up a server, you need to implement `ServerConnectionHandler` on some struct.
-### `ServerConnectionHandler`
-This trait simply defines *what* your server connections will do once they are instantiated. 
-```rust
-pub trait ServerConnectionHandler<I>
-where
-    I: InitializeConnectionMessage,
-    Self: 'static,
-{
-    fn handler(conn: &mut ServerConnection<I>) -> ServerHandlerResult;
-}
-```
-The only requirement is that you initialize the connection before you do any other work, for example:
-```rust
-struct ServerConnHandler;
-impl ServerConnectionHandler<InitRequest> for ServerConnHandler {
-    fn handler(conn: &mut ServerConnection<InitRequest>) -> seraphic::server::ServerHandlerResult {
-        let init_req = conn.initialize(InitResponse {}).unwrap();
-        loop {
-            match conn.conn.receiver.try_recv() {
-                Ok(msg) => {
-                    let wrapper = MyWrapper::try_from(msg).expect("failed to get wrapper");
-                    ...
-                },
-              ...
-            }
-        }
-    }
-}
-```
-Actually spinning up a server is very similar to creating a `TcpStream`:
-```rust
-let mut server = Server::<InitRequest, ServerConnHandler>::listen(ADDR).unwrap();
-```
-Much like how you can handle incoming connections with `TcpListener::incoming`, you can handle incoming connections to your server using `next()`
-```rust
-let (conn, shutdown_signal): (ServerConnection<InitRequest>, Arc<AtomicBool>) = server.next().unwrap();
-// in order to get your connection working with your handler, pass these to the `spawn_connection_thread` method
-server.spawn_connection_thread(conn, shutdown_signal);
-```
-
-## `ClientConnection<I>`
-If you are familiar with working with `TcpStream` in Rust, this should feel somewhat similar.
-`ClientConnection<I>` is quite easy to spin up using the `connect` method. 
-This assumes there is a `Server` listening on the given address.
-```rust
-let client = ClientConnection::connect("127.0.0.1:3000");
-// make sure to initialize the connection
-let init_response = client.initialize(InitRequest {})?;
-```
-
-Referring to the [Echo Example](https://github.com/voidKandy/seraphic/tree/dev/examples/echo.rs) might be helpful
+Referring to the [tests](https://github.com/voidKandy/seraphic/tree/dev/tests) might be helpful
 
 
