@@ -121,8 +121,18 @@ You *do not* need to manually define these enums. Instead you can use the `wrapp
 wrapper!(<ResponseWrapper|RequestWrapper>, <Name of your enum>, [<Each variant type of your enum>])
 ```
 ```rust
-seraphic_derive::wrapper!(ResponseWrapper, MyResponse, [SomeFooResponse]);
-seraphic_derive::wrapper!(RequestWrapper, MyRequest, [SomeFooRequest]);
+wrapper!(ResponseWrapper, MyResponse, [SomeFooResponse]);
+// expands to:
+#[derive(ResponseWrapper)]
+enum MyResponse {
+  Some(SomeFooResponse)
+}
+wrapper!(RequestWrapper, MyRequest, [SomeFooRequest]);
+// expands to:
+#[derive(RequestWrapper)]
+enum MyRequest {
+  Some(SomeFooRequest)
+}
 ```
 
 These structs need only to implement `Debug`
