@@ -36,8 +36,8 @@ where
             return Ok(Self::Req { id, req });
         }
 
-        if let Ok(res) = serde_json::from_value::<Response>(json) {
-            let id = res.id.clone();
+        if let Ok(res) = serde_json::from_value::<IdentifiedResponse>(json) {
+            let id = res.res.id.clone();
             match Rs::try_from_res(res).map_err(|err| {
                 serde::de::Error::custom(format!(
                     "Err converting from deserialized Response to wrapper: {err:#?}",
@@ -69,7 +69,7 @@ where
                 req.serialize(serializer)
             }
             Self::Res { id, res } => {
-                let res: Response = res.into_res(id);
+                let res: IdentifiedResponse = res.into_res(id);
                 res.serialize(serializer)
             }
             Self::Err { id, err } => {
@@ -90,6 +90,14 @@ pub struct Request {
     pub params: serde_json::Value,
     /// An identifier established by the Client that MUST contain a String, Number, or NULL value if included. If it is not included it is assumed to be a notification. The value SHOULD normally not be Null [1] and Numbers SHOULD NOT contain fractional parts [2]
     pub id: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+/// Because structs implementing RpcResponse *could* have identical bodies, this allows them to be
+/// identified by string and serialized/deserialized that way.
+pub struct IdentifiedResponse {
+    pub id: String,
+    pub res: Response,
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
@@ -129,6 +137,6 @@ impl Response {
     }
 
     pub fn from_res(id: impl ToString, res: impl RpcResponse) -> Self {
-        res.into_response(id).unwrap()
+        res.into_response(id).unwrap().res
     }
 }

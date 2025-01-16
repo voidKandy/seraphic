@@ -5,7 +5,7 @@ pub mod packet;
 pub mod tokio;
 
 use error::Error;
-pub use msg::{Message, MessageId, Request, Response};
+pub use msg::{IdentifiedResponse, Message, MessageId, Request, Response};
 pub use seraphic_derive as derive;
 use serde_json::json;
 
@@ -24,12 +24,22 @@ pub trait RpcNamespace: PartialEq + Copy {
 pub trait RpcResponse:
     std::fmt::Debug + Clone + serde::Serialize + for<'de> serde::Deserialize<'de> + PartialEq
 {
-    fn try_from_response(res: &Response) -> MainResult<Result<Self, Error>> {
-        if let Some(e) = &res.error {
+    const IDENTITY: &str;
+
+    fn try_from_response(res: &IdentifiedResponse) -> MainResult<Result<Self, Error>> {
+        if res.id.as_str() != Self::IDENTITY {
+            return Err(std::io::Error::other(format!(
+                "Identities do not match, expected: {} got: {}",
+                Self::IDENTITY,
+                res.id
+            ))
+            .into());
+        }
+        if let Some(e) = &res.res.error {
             return Ok(Err(e.clone()));
         }
         let empty_json = json!({});
-        let val = res.result.as_ref().unwrap_or(&empty_json);
+        let val = res.res.result.as_ref().unwrap_or(&empty_json);
 
         let me: Self = serde_json::from_value(val.clone()).expect("failed to deserialize Response");
 
@@ -37,13 +47,17 @@ pub trait RpcResponse:
     }
 
     /// Only fails if self fails to serialize
-    fn into_response(&self, id: impl ToString) -> MainResult<Response> {
+    fn into_response(&self, id: impl ToString) -> MainResult<IdentifiedResponse> {
         let result = serde_json::to_value(self)?;
-        Ok(Response {
+        let res = Response {
             jsonrpc: JSONRPC_FIELD.to_string(),
             id: id.to_string(),
             result: Some(result),
             error: None,
+        };
+        Ok(IdentifiedResponse {
+            id: Self::IDENTITY.to_string(),
+            res,
         })
     }
 }
@@ -116,10 +130,10 @@ pub trait ResponseWrapper: std::fmt::Debug + PartialEq {
             res: self,
         }
     }
-    fn into_res(&self, id: impl ToString) -> Response
+    fn into_res(&self, id: impl ToString) -> IdentifiedResponse
     where
         Self: Sized;
-    fn try_from_res(res: Response) -> MainResult<Result<Self, Error>>
+    fn try_from_res(res: IdentifiedResponse) -> MainResult<Result<Self, Error>>
     where
         Self: Sized;
 }

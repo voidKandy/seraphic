@@ -2,6 +2,7 @@ use core::panic;
 use darling::FromDeriveInput;
 use proc_macro::{self, TokenStream};
 use quote::{format_ident, quote};
+use std::hash::Hash;
 use syn::{parse_macro_input, Data, DataEnum, DataStruct, DeriveInput, TypePath};
 
 // https://github.com/imbolc/rust-derive-macro-guide
@@ -94,9 +95,12 @@ pub fn derive_rpc_req(input: TokenStream) -> TokenStream {
             };
 
             let mut output = quote! {};
+            let response_struct_id = format!("{response_struct_name}").to_lowercase();
             if should_impl {
                 output = quote! {
-                    impl RpcResponse for #response_struct_name {}
+                    impl RpcResponse for #response_struct_name {
+                        const IDENTITY: &str = #response_struct_id;
+                    }
                 }
             }
             output = quote! {
@@ -247,7 +251,7 @@ pub fn derive_res_wrapper(input: TokenStream) -> TokenStream {
             }
 
             let into_res = quote! {
-                fn into_res(&self, id: impl ToString) -> seraphic::Response {
+                fn into_res(&self, id: impl ToString) -> seraphic::IdentifiedResponse {
                     match self {
                         #into_res_body
                     }
@@ -255,7 +259,7 @@ pub fn derive_res_wrapper(input: TokenStream) -> TokenStream {
             };
 
             let from_res = quote! {
-                fn try_from_res(res: seraphic::Response) -> std::result::Result<std::result::Result<Self, seraphic::error::Error>, Box<dyn std::error::Error + Send + Sync + 'static>> {
+                fn try_from_res(res: seraphic::IdentifiedResponse) -> std::result::Result<std::result::Result<Self, seraphic::error::Error>, Box<dyn std::error::Error + Send + Sync + 'static>> {
                     #from_res_body
                     return ret;
                 }
