@@ -90,6 +90,7 @@ impl<T> Serialize for TcpPacket<T> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub enum PacketRead<T> {
     Message(T),
     Disconnected,

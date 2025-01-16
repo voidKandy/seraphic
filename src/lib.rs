@@ -7,6 +7,7 @@ pub mod tokio;
 use error::Error;
 pub use msg::{Message, MessageId, Request, Response};
 pub use seraphic_derive as derive;
+use serde_json::json;
 
 type MainErr = Box<dyn std::error::Error + Send + Sync + 'static>;
 type MainResult<T> = std::result::Result<T, MainErr>;
@@ -27,10 +28,8 @@ pub trait RpcResponse:
         if let Some(e) = &res.error {
             return Ok(Err(e.clone()));
         }
-        let val = res
-            .result
-            .as_ref()
-            .ok_or(std::io::Error::other("No result or error in response"))?;
+        let empty_json = json!({});
+        let val = res.result.as_ref().unwrap_or(&empty_json);
 
         let me: Self = serde_json::from_value(val.clone()).expect("failed to deserialize Response");
 
@@ -63,28 +62,43 @@ pub trait RpcRequest:
     fn method() -> &'static str;
     fn namespace() -> Self::Namespace;
 
+    fn namespace_method() -> String {
+        format!(
+            "{}{}{}",
+            Self::namespace().as_str(),
+            Self::Namespace::SEPARATOR,
+            Self::method()
+        )
+    }
+
     /// Only fails if self fails to serialize
     fn into_request(&self, id: impl ToString) -> MainResult<Request> {
         let params = serde_json::to_value(&self)?;
-        let method = format!("{}_{}", Self::namespace().as_str(), Self::method());
         Ok(Request {
             jsonrpc: JSONRPC_FIELD.to_string(),
-            method,
+            method: Self::namespace_method(),
             params,
             id: id.to_string(),
         })
     }
-    fn try_from_request(req: &Request) -> MainResult<Option<Self>> {
+    fn try_from_request(req: &Request) -> MainResult<Self> {
         if let Some((namespace_str, method_str)) = req.method.split_once(Self::Namespace::SEPARATOR)
         {
             let namespace = Self::Namespace::try_from_str(namespace_str).unwrap();
             if namespace != Self::namespace() || method_str != Self::method() {
-                return Ok(None);
+                return Err(std::io::Error::other(format!("namespace & method do not match expected. Got namespace: {namespace_str} with method: {method_str} expected namespace: {} with method: {}",
+                    Self::namespace().as_str(), Self::method()
+                )).into());
             }
 
-            return Self::try_from_json(&req.params).and_then(|me| Ok(Some(me)));
+            return Self::try_from_json(&req.params);
         }
-        Ok(None)
+        Err(std::io::Error::other(format!(
+            "Request method: {} could not be split by separator: {}",
+            req.method,
+            Self::Namespace::SEPARATOR
+        ))
+        .into())
     }
     fn try_from_json(json: &serde_json::Value) -> MainResult<Self>
     where

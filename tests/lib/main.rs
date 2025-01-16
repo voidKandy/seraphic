@@ -20,8 +20,24 @@ pub struct TestRequest {}
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TestResponse {}
 
-seraphic_derive::wrapper!(ResponseWrapper, MyResponse, [TestResponse]);
-seraphic_derive::wrapper!(RequestWrapper, MyRequest, [TestRequest]);
+#[derive(RpcRequest, Clone, Deserialize, Serialize, Debug, PartialEq)]
+#[rpc_request(namespace = "TestNS:test")]
+pub struct FooRequest {}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct FooResponse {}
+
+#[derive(Debug, Clone, RequestWrapper, PartialEq)]
+pub enum MyRequest {
+    Test(TestRequest),
+    Foo(FooRequest),
+}
+
+#[derive(Debug, Clone, ResponseWrapper, PartialEq)]
+pub enum MyResponse {
+    Test(TestResponse),
+    Foo(FooResponse),
+}
 
 pub type Message = seraphic::Message<MyRequest, MyResponse>;
 pub type MessagePacket = TcpPacket<Message>;

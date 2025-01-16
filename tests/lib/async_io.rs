@@ -1,4 +1,4 @@
-use seraphic::packet::TcpPacket;
+use seraphic::packet::{PacketRead, TcpPacket};
 use serde::{Deserialize, Serialize};
 use std::thread::sleep;
 use std::time::Duration;
@@ -18,10 +18,10 @@ async fn test_async_tcp_packet_read_write() {
     tokio::spawn(async move {
         let (socket, _) = listener.accept().await.unwrap();
         let mut reader = BufReader::new(socket);
-        let received: Option<TestData> = TcpPacket::async_read(&mut reader).await.unwrap();
+        let received: PacketRead<TestData> = TcpPacket::async_read(&mut reader).await.unwrap();
         assert_eq!(
             received,
-            Some(TestData {
+            PacketRead::Message(TestData {
                 id: 42,
                 message: "Async Hello".into()
             })
@@ -39,4 +39,3 @@ async fn test_async_tcp_packet_read_write() {
         .await
         .unwrap();
 }
-

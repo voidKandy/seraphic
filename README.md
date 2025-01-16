@@ -110,26 +110,19 @@ Each `RpcRequest` should have a corresponding `RpcResponse` struct. This can be 
     ```
 **Keep in mind**:  
 + Both `RpcRequest` and `RpcResponse` structs MUST implement `serde::Serialize`, `serde::Deserialize`, `Clone` and `Debug`
-+ mutliple `RpcRequests` can have the same corresponding `RpcResponse`
++ *NEITHER* `RpcRequest` or `RpcResponse` structs can be unit structs, they must have a body, even if they have no fields (which is unlikely)
++ multiple `RpcRequests` can have the same corresponding `RpcResponse`
 + If a `response` argument *is* passed in the `rpc_request` macros, the macro assumes the struct already implements `RpcResponse`, if not, the proc macros assumes the corresponding *Response* struct *does not* implement `RpcResponse` and will implement it for you.
 
 #### `RequestWrapper` and `ResponseWrapper` 
 > simply enums that include all of the `RpcRequest` and `RpcResponse` structs included in your protocol.
 
-You *do not* need to manually define these enums. Instead you can use the `wrapper` macro, which has the following syntax:
-```
-wrapper!(<ResponseWrapper|RequestWrapper>, <Name of your enum>, [<Each variant type of your enum>])
-```
 ```rust
-wrapper!(ResponseWrapper, MyResponse, [SomeFooResponse]);
-// expands to:
-#[derive(ResponseWrapper)]
+#[derive(Debug, Clone, ResponseWrapper, PartialEq)]
 enum MyResponse {
   Some(SomeFooResponse)
 }
-wrapper!(RequestWrapper, MyRequest, [SomeFooRequest]);
-// expands to:
-#[derive(RequestWrapper)]
+#[derive(Debug, Clone, RequestWrapper, PartialEq)]
 enum MyRequest {
   Some(SomeFooRequest)
 }

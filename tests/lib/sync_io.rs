@@ -1,4 +1,4 @@
-use seraphic::packet::TcpPacket;
+use seraphic::packet::{PacketRead, TcpPacket};
 use serde::{Deserialize, Serialize};
 use std::io::{BufReader, Write};
 use std::net::{TcpListener, TcpStream};
@@ -12,10 +12,10 @@ struct TestData {
 
 fn handle_client(mut stream: TcpStream) {
     let mut reader = BufReader::new(&mut stream);
-    let received: Option<TestData> = TcpPacket::<TestData>::read(&mut reader).unwrap();
+    let received: PacketRead<TestData> = TcpPacket::<TestData>::read(&mut reader).unwrap();
     assert_eq!(
         received,
-        Some(TestData {
+        PacketRead::Message(TestData {
             id: 1,
             message: "Hello".into()
         })
