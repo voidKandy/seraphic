@@ -105,8 +105,10 @@ Each `RpcRequest` should have a corresponding `RpcResponse` struct. This can be 
     struct SomeResponse {}
     
     // If some response isn't the response to some other `RpcRequest` already
-    // This is fine because `RpcResponse` is a flag trait
-    impl RpcResponse for SomeResponse {}
+    impl RpcResponse for SomeResponse {
+        // you could make this whatever you want, but the RpcRequest macro simply makes the IDENTITY the name of the struct in lowercase
+        const IDENTITY: &str = "someresponse";
+    }
     ```
 **Keep in mind**:  
 + Both `RpcRequest` and `RpcResponse` structs MUST implement `serde::Serialize`, `serde::Deserialize`, `Clone` and `Debug`
