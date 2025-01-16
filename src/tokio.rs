@@ -1,4 +1,4 @@
-use crate::packet::{header_size, TcpPacket};
+use crate::packet::{header_size, PacketRead, TcpPacket};
 use std::io::ErrorKind;
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
@@ -6,7 +6,7 @@ impl<T> TcpPacket<T>
 where
     T: serde::Serialize + for<'de> serde::Deserialize<'de> + std::fmt::Debug,
 {
-    pub async fn async_read<R>(inp: &mut R) -> std::io::Result<Option<T>>
+    pub async fn async_read<R>(inp: &mut R) -> std::io::Result<PacketRead<T>>
     where
         R: AsyncRead + std::marker::Unpin,
     {
@@ -25,10 +25,10 @@ where
                 Err(err)
                     if err.kind() == ErrorKind::UnexpectedEof && header == [0u8; header_size()] =>
                 {
-                    return Ok(None);
+                    return Ok(PacketRead::Disconnected);
                 }
                 Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                    return Ok(None);
+                    return Ok(PacketRead::Empty);
                 }
                 Err(err) => {
                     return Err(std::io::Error::other(format!(
@@ -49,10 +49,10 @@ where
                         String::from_utf8_lossy(&buffer),
                     ))
                 })?;
-                Ok(Some(typ))
+                Ok(PacketRead::Message(typ))
             }
             Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                return Ok(None);
+                return Ok(PacketRead::Empty);
             }
             Err(err) => {
                 return Err(std::io::Error::other(format!(

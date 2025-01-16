@@ -1,10 +1,9 @@
-use serde::{Deserialize, Deserializer, Serialize};
+use crate::MainResult;
+use serde::{Deserialize, Serialize};
 use std::{
     io::{BufRead, ErrorKind, Write},
     marker::PhantomData,
 };
-
-use crate::MainResult;
 
 #[derive(Clone, Debug)]
 pub struct TcpPacket<T> {
@@ -91,11 +90,17 @@ impl<T> Serialize for TcpPacket<T> {
     }
 }
 
+pub enum PacketRead<T> {
+    Message(T),
+    Disconnected,
+    Empty,
+}
+
 impl<T> TcpPacket<T>
 where
     T: Serialize + std::fmt::Debug + for<'de> Deserialize<'de>,
 {
-    pub fn read(inp: &mut dyn BufRead) -> std::io::Result<Option<T>> {
+    pub fn read(inp: &mut dyn BufRead) -> std::io::Result<PacketRead<T>> {
         let mut header = [0u8; header_size()];
         let mut buffer = [0u8; 1024].to_vec();
         let mut size = None;
@@ -111,10 +116,10 @@ where
                 Err(err)
                     if err.kind() == ErrorKind::UnexpectedEof && header == [0u8; header_size()] =>
                 {
-                    return Ok(None);
+                    return Ok(PacketRead::Disconnected);
                 }
                 Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                    return Ok(None);
+                    return Ok(PacketRead::Empty);
                 }
                 Err(err) => {
                     return Err(std::io::Error::other(format!(
@@ -135,10 +140,10 @@ where
                         String::from_utf8_lossy(&buffer),
                     ))
                 })?;
-                Ok(Some(typ))
+                Ok(PacketRead::Message(typ))
             }
             Err(err) if err.kind() == ErrorKind::WouldBlock => {
-                return Ok(None);
+                return Ok(PacketRead::Empty);
             }
             Err(err) => {
                 return Err(std::io::Error::other(format!(
